@@ -10,6 +10,7 @@ import { botInstructions } from '../personality.js';
 import type { ReferencedInput } from '../replies.js';
 import { validToWorker, type FromWorker, type WorkerStatus } from './protocol.js';
 import { nicknameIntent } from '../nickname-request.js';
+import { OpenAIProvider, apiModels } from '../openai-provider.js';
 
 if (!process.send) throw new Error('AI worker requires local IPC.');
 const send = (message: FromWorker) => { if (process.connected) process.send!(message, () => {}); };
@@ -99,13 +100,23 @@ try {
   const stub = process.env.AI_PROVIDER === 'stub';
   if (stub) { chat = new ChatService(new StubProvider(),store); state('ready','Offline stub (no AI request)'); }
   else {
-    const models = await listModels();
-    const model = process.env.CHATGPT_MODEL?.trim() || models[0]!.slug;
-    if (!models.some(item => item.slug === model)) throw new UserError('Configured AI model is unavailable. Stop the combined bot and check auth models.');
-    const effort = reasoningEffort();
     const instructions = () => `${botInstructions()}\n\nYour AI persona is Jarvis. This combined Discord application may be displayed as RainBot; Jarvis and RainBot both refer to you. This Discord bot also provides deterministic /sleep commands. You cannot join, leave, change ambience or control voice. For requested sleep actions, direct the member to the appropriate /sleep command; never claim an action was executed.`;
-    chat = new ChatService(new ChatGPTProvider(model,undefined,undefined,effort,instructions),store);
-    state('ready',`ChatGPT plan / ${model}${effort ? ` / reasoning ${effort}` : ''}`);
+    if (process.env.AI_PROVIDER === 'openai') {
+      const key = process.env.OPENAI_API_KEY ?? '';
+      const model = process.env.OPENAI_MODEL?.trim() ?? '';
+      const models = await apiModels(key);
+      if (!models.includes(model)) throw new UserError('The configured API model is not available to this key. Check Settings.');
+      const effort = reasoningEffort({ CHATGPT_REASONING_EFFORT: process.env.OPENAI_REASONING_EFFORT });
+      chat = new ChatService(new OpenAIProvider(model,key,effort,process.env.OPENAI_WEB_SEARCH === 'true',fetch,instructions),store);
+      state('ready',`OpenAI API / ${model}`);
+    } else {
+      const models = await listModels();
+      const model = process.env.CHATGPT_MODEL?.trim() || models[0]!.slug;
+      if (!models.some(item => item.slug === model)) throw new UserError('Configured AI model is unavailable. Stop the combined bot and check auth models.');
+      const effort = reasoningEffort();
+      chat = new ChatService(new ChatGPTProvider(model,undefined,undefined,effort,instructions),store);
+      state('ready',`ChatGPT plan / ${model}${effort ? ` / reasoning ${effort}` : ''}`);
+    }
   }
 } catch(error) {
   state('unavailable',safeError(error));

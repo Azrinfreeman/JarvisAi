@@ -6,3 +6,6 @@ node_modules/
 data/
 coverage/
 *.log
+desktop/.stage/
+desktop/out/
+output/

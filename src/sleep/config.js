@@ -1,7 +1,6 @@
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
-const assets = resolve(process.env.SLEEP_ASSET_DIR || resolve(projectRoot, 'assets'));
+import { stateRoot as projectRoot, defaultAssets } from '../app-paths.js';
+const assets = resolve(process.env.SLEEP_ASSET_DIR || defaultAssets);
 
 function positiveInteger(name, fallback) {
   const value = Number(process.env[name] ?? fallback);

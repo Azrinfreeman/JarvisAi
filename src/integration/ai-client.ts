@@ -1,6 +1,6 @@
 import { fork, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { fileURLToPath } from 'node:url';
+import { stateRoot, runtimeArguments, runtimeEntry } from '../app-paths.js';
 import { EventEmitter } from 'node:events';
 import { readFileSync, unlinkSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -26,12 +26,13 @@ export class AIClient extends EventEmitter {
   private retry?: ReturnType<typeof setTimeout>;
   private failures = 0;
   status: WorkerStatus = {phase:'starting',label:'Starting AI connection'};
+  get workerPid() { return this.child?.pid; }
   constructor(private options: { env?: NodeJS.ProcessEnv; entry?: string; restartMs?: number } = {}) { super(); }
   start() {
     if (this.stopped || this.child) return;
     const env = workerEnvironment(this.options.env ?? process.env);
-    const child = fork(this.options.entry ?? fileURLToPath(new URL('./ai-worker.ts',import.meta.url)),[],{
-      execArgv:['--import','tsx'], env,
+    const child = fork(this.options.entry ?? runtimeEntry(stateRoot,'src/integration/ai-worker.ts'),[],{
+      execArgv:this.options.entry?.endsWith('.ts') ? ['--import','tsx'] : runtimeArguments, env,
       stdio:['ignore','ignore','ignore','ipc'], serialization:'advanced', windowsHide:true,
     });
     this.child = child;
@@ -49,7 +50,7 @@ export class AIClient extends EventEmitter {
     child.once('exit',() => {
       // Only this exact, now-exited child may have its orphaned lock removed.
       // Never clear a lock owned by auth, another worker, or an unrelated PID.
-      const lock = join(resolve(env.AI_DATA_DIR || fileURLToPath(new URL('../../data/ai/',import.meta.url))),'runtime.lock');
+      const lock = join(resolve(env.AI_DATA_DIR || join(stateRoot,'data/ai')),'runtime.lock');
       try { if (child.pid && readFileSync(lock,'utf8').trim() === String(child.pid)) unlinkSync(lock); } catch {}
       failed();
     });
@@ -118,13 +119,21 @@ export class AIClient extends EventEmitter {
     return this.request({type:'ask',input},{deliver,reference,nickname,nicknameRequest:input.nickname});
   }
   reset(identity: ChatIdentity) { return this.request({type:'reset',identity}); }
-  close() {
-    if (this.stopped) return;
+  async close(options: { force?: boolean } = {}): Promise<boolean> {
     this.stopped = true; clearTimeout(this.retry);
     for (const p of this.requests.values()) { clearTimeout(p.timer); p.controller.abort(); p.reject(new UserError('Bot is shutting down.')); }
     this.requests.clear();
     const child = this.child;
     if (child?.connected) child.send({type:'shutdown'},() => {});
-    if (child) { const timer = setTimeout(() => child.kill(),3000); timer.unref(); child.once('exit',() => clearTimeout(timer)); }
+    if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+    return new Promise(resolve => {
+      const done = () => { clearTimeout(timer); resolve(true); };
+      const timer = setTimeout(() => {
+        child.removeListener('exit',done);
+        if (options.force !== false) child.kill();
+        resolve(false);
+      }, options.force === false ? 10000 : 3000);
+      timer.unref(); child.once('exit',done);
+    });
   }
 }

@@ -1,3 +1,4 @@
+import './bootstrap.js';
 import { REST, Routes } from 'discord.js';
 import { required, snowflake } from './config.js';
 import { combinedCommands } from './commands.js';

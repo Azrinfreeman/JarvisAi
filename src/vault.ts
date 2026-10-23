@@ -1,32 +1,18 @@
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync, openSync, closeSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { stateRoot } from './app-paths.js';
 import { UserError } from './errors.js';
+import { protect } from './secret-protection.js';
+export { protect } from './secret-protection.js';
 
-export const dataDir = resolve(process.env.AI_DATA_DIR || fileURLToPath(new URL('../data/ai/', import.meta.url)));
+export const dataDir = resolve(process.env.AI_DATA_DIR || join(stateRoot, 'data/ai'));
 const credentialPath = join(dataDir, 'chatgpt.dpapi');
 
 export type Credential = {
   clientId: string; subject: string; accessToken: string; refreshToken?: string;
   idToken: string; scopes: string[]; expiresAt: number;
 };
-
-export function protect(input: string, decrypt = false): string {
-  if (process.platform !== 'win32') throw new UserError('This trial stores credentials with Windows DPAPI and must run on Windows.');
-  // The secret travels through stdin, never a command argument or a temporary plaintext file.
-  const script = `$ErrorActionPreference = 'Stop'; [Console]::InputEncoding = [Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); Add-Type -AssemblyName System.Security; `
-    + `$value = [Console]::In.ReadToEnd(); `
-    + (decrypt
-      ? `$bytes = [Convert]::FromBase64String($value); $plain = [Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Text.Encoding]::UTF8.GetString($plain))`
-      : `$bytes = [Text.Encoding]::UTF8.GetBytes($value); $cipher = [Security.Cryptography.ProtectedData]::Protect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($cipher))`);
-  try {
-    return execFileSync(resolve(process.env.SystemRoot || 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-Command', script],
-      { input, encoding: 'utf8', windowsHide: true, timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-  } catch { throw new UserError('Protected credential storage failed. Use the same Windows account that saved the credentials.'); }
-}
 
 export function readCredential(): Credential | undefined {
   if (!existsSync(credentialPath)) return undefined;

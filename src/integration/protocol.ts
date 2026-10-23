@@ -77,7 +77,8 @@ export function validFromWorker(v: unknown): v is FromWorker {
 
 export function workerEnvironment(env: NodeJS.ProcessEnv, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const allowed = ['SystemRoot','SYSTEMROOT','WINDIR','PATH','Path','PATHEXT','TEMP','TMP','USERPROFILE','APPDATA','LOCALAPPDATA',
-    'AI_DATA_DIR','AI_PROVIDER','CHATGPT_MODEL','CHATGPT_REASONING_EFFORT'];
+    'AI_DATA_DIR','AI_PROVIDER','CHATGPT_MODEL','CHATGPT_REASONING_EFFORT','BOT_CONFIG_REVISION','RAINBOT_STATE_ROOT','RAINBOT_RESOURCE_ROOT'];
+  if ((overrides.AI_PROVIDER ?? env.AI_PROVIDER) === 'openai') allowed.push('OPENAI_API_KEY','OPENAI_MODEL','OPENAI_REASONING_EFFORT','OPENAI_WEB_SEARCH');
   return Object.fromEntries(allowed.flatMap(k => {
     const value = overrides[k] ?? env[k]; return value === undefined ? [] : [[k,value]];
   }));

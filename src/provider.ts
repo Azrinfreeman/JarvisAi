@@ -44,26 +44,26 @@ export async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerat
         const line = buffer.slice(0, end).replace(/\r$/, '');
         buffer = buffer.slice(end + 1);
         frameSize += line.length;
-        if (frameSize > 1_000_000) throw new UserError('ChatGPT returned an oversized stream event.');
+        if (frameSize > 1_000_000) throw new UserError('The AI provider returned an oversized stream event.');
         if (!line) {
           const payload = data.join('\n'); data = []; frameSize = 0;
           if (payload && payload !== '[DONE]') {
             try { yield JSON.parse(payload) as Record<string, unknown>; }
             catch (error) {
               if (error instanceof UserError) throw error;
-              throw new UserError('ChatGPT returned an invalid stream event.');
+              throw new UserError('The AI provider returned an invalid stream event.');
             }
           }
         } else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''));
       }
-      if (buffer.length > 1_000_000) throw new UserError('ChatGPT returned an oversized stream event.');
+      if (buffer.length > 1_000_000) throw new UserError('The AI provider returned an oversized stream event.');
       if (done) break;
     }
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 
 export async function consumeResponse(body: ReadableStream<Uint8Array>, maxChars = 12000,
-  execute?: (calls: Array<{name?:unknown;arguments?:unknown}>)=>Promise<string>): Promise<string> {
+  execute?: (calls: Array<{name?:unknown;arguments?:unknown}>)=>Promise<string>, errorFor = providerError): Promise<string> {
   let answer = '';
   const annotations: unknown[] = [];
   const streamedCalls=new Map<string,{name:unknown;arguments:unknown}>();
@@ -96,9 +96,9 @@ export async function consumeResponse(body: ReadableStream<Uint8Array>, maxChars
     if (event.type === 'response.failed' || event.type === 'error') {
       const response = event.response as { error?: { code?: string } } | undefined;
       const error = event.error as { code?: string } | undefined;
-      throw providerError(0, response?.error?.code ?? error?.code ?? String(event.code ?? ''));
+      throw errorFor(0, response?.error?.code ?? error?.code ?? String(event.code ?? ''));
     }
-    if (event.type === 'response.incomplete') throw new UserError('ChatGPT returned an incomplete answer. Try a shorter request. No conversation turn was saved.');
+    if (event.type === 'response.incomplete') throw new UserError('The AI provider returned an incomplete answer. Try a shorter request. No conversation turn was saved.');
     if (event.type === 'response.completed') {
       const response = event.response as { output?: Array<{ type?: string; name?:unknown; arguments?:unknown; content?: Array<{ type?: string; text?: string; annotations?: unknown[] }> }> } | undefined;
       const canonical=response?.output?.filter(item=>item.type==='function_call') ?? [];
@@ -114,35 +114,38 @@ export async function consumeResponse(body: ReadableStream<Uint8Array>, maxChars
         answer = parts.map(part => part.text ?? '').join('\n');
         for (const part of parts) if (Array.isArray(part.annotations)) annotations.push(...part.annotations);
       }
-      if (!answer.trim()) throw new UserError('ChatGPT completed without a text answer. Try another prompt or model.');
+      if (!answer.trim()) throw new UserError('The AI provider completed without a text answer. Try another prompt or model.');
       checkLimit(answer);
       const rendered = renderWebCitations(answer, annotations);
       checkLimit(rendered);
       return rendered;
     }
   }
-  throw new UserError('The ChatGPT stream ended before completion. No conversation turn was saved.');
+  throw new UserError('The AI stream ended before completion. No conversation turn was saved.');
 }
 
 export class ChatGPTProvider implements Provider {
   constructor(readonly model: string, private getToken = accessToken, private request: typeof fetch = fetch,
-    private reasoningEffort?: ReasoningEffort, private getInstructions = botInstructions) {}
+    private reasoningEffort?: ReasoningEffort, private getInstructions = botInstructions,
+    private api?: { webSearch: boolean; errorFor: typeof providerError }) {}
   async generate(messages: ProviderMessage[], signal: AbortSignal, options:GenerationOptions={}): Promise<string> {
     const action=options.nickname;
-    const instructions = `${this.getInstructions()}\n\n${nicknameGuidance}${action?'\nThe current direct request has one exact nickname capability. Call change_server_nickname once to perform it; do not answer that it is done yourself.':''}\n\n${webSearchInstructions}`;
+    const searchInstructions = !this.api || this.api.webSearch ? webSearchInstructions : 'Web search is disabled for this connection. Do not claim to have searched or verified online sources.';
+    const instructions = `${this.getInstructions()}\n\n${nicknameGuidance}${action?'\nThe current direct request has one exact nickname capability. Call change_server_nickname once to perform it; do not answer that it is done yourself.':''}\n\n${searchInstructions}`;
     const token = await this.getToken();
     const response = await this.request('https://api.openai.com/v1/responses', {
       method: 'POST', redirect: 'error', signal,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: this.model, input: messages, store: false, stream: true,
-        tools: [{ type: 'web_search' },...(action?[nicknameTool(action.request)]:[])],
-        tool_choice: action?{type:'function',name:'change_server_nickname'}:'auto',
+        tools: [...(!this.api || this.api.webSearch ? [{ type: 'web_search' }] : []),...(action?[nicknameTool(action.request)]:[])],
+        ...(action ? { tool_choice:{type:'function',name:'change_server_nickname'} } : !this.api || this.api.webSearch ? {tool_choice:'auto'} : {}),
         ...(action?{parallel_tool_calls:false}:{}),
         ...(this.reasoningEffort ? { reasoning: { effort: this.reasoningEffort } } : {}),
+        ...(this.api ? { max_output_tokens: 4000 } : {}),
         instructions }),
     });
-    if (!response.ok) throw providerError(response.status);
-    if (!response.body) throw new UserError('ChatGPT returned no response stream.');
+    if (!response.ok) throw (this.api?.errorFor ?? providerError)(response.status);
+    if (!response.body) throw new UserError('The AI provider returned no response stream.');
     return consumeResponse(response.body,12000,action?async calls=>{
       if (calls.length!==1 || calls[0]!.name!=='change_server_nickname' || typeof calls[0]!.arguments!=='string' || calls[0]!.arguments.length>1000) {
         throw new UserError('The AI requested an unexpected action. No nickname was changed.');
@@ -153,7 +156,7 @@ export class ChatGPTProvider implements Provider {
       }
       signal.throwIfAborted();
       return action.execute(request,signal);
-    }:undefined);
+    }:undefined,this.api?.errorFor);
   }
 }
 

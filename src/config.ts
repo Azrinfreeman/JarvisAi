@@ -30,7 +30,7 @@ function ids(name: string, env: NodeJS.ProcessEnv): string[] {
 
 export function botConfig(env: NodeJS.ProcessEnv = process.env) {
   const provider = env.AI_PROVIDER?.trim() || 'chatgpt';
-  if (provider !== 'chatgpt' && provider !== 'stub') throw new UserError('AI_PROVIDER must be chatgpt or stub.');
+  if (provider !== 'chatgpt' && provider !== 'openai' && provider !== 'stub') throw new UserError('AI_PROVIDER must be chatgpt, openai, or stub.');
   const accessMode = env.ACCESS_MODE?.trim() || 'owner';
   if (accessMode !== 'owner' && accessMode !== 'server') throw new UserError('ACCESS_MODE must be owner or server.');
   return {

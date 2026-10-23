@@ -1,6 +1,7 @@
+import './bootstrap.js';
 import { Client, Events, GatewayIntentBits, MessageFlags, MessageType, PermissionFlagsBits, Routes, type APIMessage, type ChatInputCommandInteraction } from 'discord.js';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { stateRoot } from './app-paths.js';
 import { botConfig, authorized } from './config.js';
 import { loadConfig } from './sleep/config.js';
 import { SessionStore } from './sleep/storage/session-store.js';
@@ -18,6 +19,7 @@ import { healthMonitor } from './integration/health.js';
 import { Conversations } from './storage.js';
 import { Nicknames } from './nicknames.js';
 import { nicknameIntent } from './nickname-request.js';
+import { startRuntimeControl } from './integration/runtime-control.js';
 
 let client: Client | undefined;
 let ai: AIClient | undefined;
@@ -25,19 +27,29 @@ let sessions: SessionManager | undefined;
 let store: SessionStore | undefined;
 let release: (() => void) | undefined;
 let closing = false;
+let cleaned = false;
+let control: Awaited<ReturnType<typeof startRuntimeControl>> | undefined;
+let shuttingDown: Promise<void> | undefined;
 let stopHealth: (() => void) | undefined;
 let nicknameEvents:Conversations | undefined;
 function cleanup() {
-  if (closing) return; closing = true;
-  stopHealth?.(); ai?.close(); sessions?.shutdown(); client?.destroy(); store?.close(); nicknameEvents?.close(); release?.();
+  if (cleaned) return; cleaned = true; closing = true;
+  stopHealth?.(); void ai?.close({force:false}); sessions?.shutdown(); void client?.destroy(); store?.close(); nicknameEvents?.close(); control?.close(); release?.();
+}
+function shutdown(exitCode = 0): Promise<void> {
+  return shuttingDown ??= (async () => {
+    closing = true; stopHealth?.(); sessions?.shutdown(); await client?.destroy();
+    if (ai && !await ai.close({force:false})) throw new UserError('AI worker did not exit. Inspect the owned process before recovery.');
+    cleanup(); process.exit(exitCode);
+  })().catch(error => { shuttingDown = undefined; throw error; });
 }
 process.once('exit',cleanup);
-process.once('SIGINT',() => { cleanup(); setTimeout(() => process.exit(0),3500).unref(); });
-process.once('SIGTERM',() => { cleanup(); setTimeout(() => process.exit(0),3500).unref(); });
+process.once('SIGINT',() => { void shutdown().catch(error => console.error(safeError(error))); });
+process.once('SIGTERM',() => { void shutdown().catch(error => console.error(safeError(error))); });
 try {
   const config = botConfig();
   const sleepConfig = loadConfig();
-  const root = fileURLToPath(new URL('../',import.meta.url));
+  const root = stateRoot;
   release = runtimeLock(join(root,'data','frontend',sleepConfig.applicationId!));
   nicknameEvents=new Conversations(join(root,'data','frontend',sleepConfig.applicationId!,'nickname-events.sqlite'));
   const nicknames=new Nicknames(config,nicknameEvents);
@@ -50,15 +62,20 @@ try {
   const sleep = sessions;
   ai = new AIClient(); const worker = ai;
   stopHealth=healthMonitor(join(root,'data','runtime-status.json'),() => ({
-    discordReady:bot.isReady(),ai:worker.status,
+    discordReady:bot.isReady(),ai:worker.status,configRevision:process.env.BOT_CONFIG_REVISION,
     sleep:store!.active().map(session=>({state:session.state,mode:session.mode,rainStyle:session.rain_style,
       voice:sleep.getConnection(session.guild_id)?.state.status ?? 'absent',audio:sleep.getRuntime(session.guild_id).player?.state.status ?? 'off'})),
   }));
   worker.on('status',status => console.log(`AI status: ${status.phase}. ${status.label}`));
   worker.start();
+  try { control = await startRuntimeControl({ revision:process.env.BOT_CONFIG_REVISION ?? 'legacy', workerPid:() => worker.workerPid, shutdown }); }
+  catch {
+    if(process.env.RAINBOT_RESOURCE_ROOT)throw new UserError('The local control channel could not start. No Discord connection was opened. Check local ownership and permissions.');
+    console.error('Local Start/Stop control is unavailable. Use the bot terminal for shutdown.');
+  }
   bot.once(Events.ClientReady,async () => {
     if (bot.user!.id !== sleepConfig.applicationId) {
-      console.error('Discord token/application ID mismatch. Stopping combined bot.'); cleanup(); process.exitCode = 1; return;
+      console.error('Discord token/application ID mismatch. Stopping combined bot.'); void shutdown(1).catch(error => console.error(safeError(error))); return;
     }
     console.log('Combined bot connected. Sleep restoration is independent of AI.');
     await sleep.restore();
@@ -66,6 +83,7 @@ try {
   bot.on(Events.VoiceStateUpdate,(oldState,newState) => sleep.onVoiceStateUpdate(oldState,newState));
   bot.on(Events.Error,() => console.error('Discord connection error. Check configuration and connectivity.'));
   async function respond(interaction: ChatInputCommandInteraction) {
+    if (closing) return;
     const owner = commandOwner(interaction.commandName);
     if (!owner || !gate.claim(`interaction:${interaction.id}`)) return;
     if (owner === 'sleep') { await handleSleep(interaction,sleep,sleepConfig.controllerRoleIds); return; }
@@ -91,7 +109,7 @@ try {
       await interaction.reply({flags:MessageFlags.Ephemeral,content:'Use /ask or mention me for AI questions. Add one image or reply to a message and tag me for context. /ask private:true keeps the question and answer visible only to you. /reset clears your AI history in this channel. Jarvis checks supplied context before searching for missing public facts. /nickname member:... name:... changes a server nickname: only the configured owner or Manage Nicknames members can use it, subject to role hierarchy. Or ask me directly: rename @member to "Exact nickname". /sleep join joins your voice channel; rain/sunny commands change ambience; /sleep leave leaves; /sleep status shows the saved session. Only authorized sleep controllers can change voice. AI replies are text and do not interrupt ambience. No microphone recording or AI speech is enabled. Everyone shares the connected owner’s AI allowance.'}); return;
     }
     if (interaction.commandName === 'status') {
-      await interaction.reply({flags:MessageFlags.Ephemeral,content:`AI: ${worker.status.phase}\n${worker.status.label}\nAccess: ${config.accessMode}. Web search: context first. Allowance is managed in ChatGPT settings.\nUse /sleep status for voice/audio state.`}); return;
+      await interaction.reply({flags:MessageFlags.Ephemeral,content:`AI: ${worker.status.phase}\n${worker.status.label}\nAccess: ${config.accessMode}. ${config.provider === 'openai' ? 'Usage is billed to the configured API project.' : 'Web search: context first. Allowance is managed in ChatGPT settings.'}\nUse /sleep status for voice/audio state.`}); return;
     }
     if (interaction.commandName === 'reset') {
       await interaction.deferReply({flags:MessageFlags.Ephemeral});
@@ -133,6 +151,7 @@ try {
     });
   });
   bot.on(Events.MessageCreate,message => {
+    if (closing) return;
     if (message.author.bot || message.webhookId || !message.inGuild() || !bot.user) return;
     const prompt = mentionedPrompt(message.content,bot.user.id);
     if (prompt === undefined || !authorized(config,{guildId:message.guildId,channelId:message.channelId,userId:message.author.id,
@@ -182,4 +201,4 @@ try {
     });
   });
   await bot.login(config.token);
-} catch(error) { console.error(safeError(error)); cleanup(); process.exitCode = 1; }
+} catch(error) { console.error(safeError(error)); void shutdown(1).catch(error => console.error(safeError(error))); }

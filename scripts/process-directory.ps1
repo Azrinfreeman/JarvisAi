@@ -1,5 +1,6 @@
 param([Parameter(Mandatory=$true)][int[]]$ProcessIds)
 $ErrorActionPreference = 'Stop'
+if (-not ('BotProcessDirectory' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -30,6 +31,7 @@ public static class BotProcessDirectory {
   }
 }
 '@
+}
 foreach ($botPid in $ProcessIds) {
   $process = Get-CimInstance Win32_Process -Filter "ProcessId = $botPid"
   if (-not $process) { throw "Process $botPid is not running" }

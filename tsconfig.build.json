@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": false, "rootDir": "src", "outDir": "desktop/.stage/backend/src", "sourceMap": false },
+  "include": ["src/**/*.ts", "src/**/*.js"],
+  "exclude": ["src/dashboard/public"]
+}

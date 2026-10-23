@@ -1,3 +1,4 @@
+import './bootstrap.js';
 import { login, logout } from './auth.js';
 import { listModels, ChatGPTProvider } from './provider.js';
 import { readCredential, runtimeLock } from './vault.js';

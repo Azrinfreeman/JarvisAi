@@ -38,10 +38,10 @@ export async function validateIdentity(idToken: string, clientId: string, nonce:
 }
 
 type TokenResponse = { access_token?: string; refresh_token?: string; id_token?: string; token_type?: string; scope?: string; expires_in?: number };
-async function tokenRequest(params: Record<string, string>): Promise<TokenResponse> {
+async function tokenRequest(params: Record<string, string>, signal?: AbortSignal): Promise<TokenResponse> {
   const response = await fetch(tokenEndpoint, {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params), signal: AbortSignal.timeout(20000), redirect: 'error',
+    body: new URLSearchParams(params), signal: signal ? AbortSignal.any([signal,AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000), redirect: 'error',
   });
   if (!response.ok) throw providerError(response.status);
   return await response.json() as TokenResponse;
@@ -57,7 +57,11 @@ export function tokenFields(token: TokenResponse, previousScopes: string[] = [])
   return { accessToken: token.access_token, scopes, expiresAt: Date.now() + token.expires_in * 1000 };
 }
 
-export async function login() {
+export async function login(options: {signal?: AbortSignal; openBrowser?: (url: string) => void; message?: (message: string) => void} = {}) {
+  const message = options.message ?? console.log;
+  const signal = AbortSignal.any([AbortSignal.timeout(5 * 60 * 1000), ...(options.signal ? [options.signal] : [])]);
+  if(signal.aborted)throw new UserError('Sign-in was cancelled. Connect again when ready.');
+  const destination = options.openBrowser ? 'RainBot' : 'your terminal';
   const previous = readCredential();
   const state = randomBytes(32).toString('base64url');
   const nonce = randomBytes(32).toString('base64url');
@@ -74,11 +78,11 @@ export async function login() {
     catch { res.writeHead(400).end('Invalid callback URL.'); return; }
     if (req.method !== 'GET' || url.pathname !== '/auth/callback') { res.writeHead(404).end(); return; }
     if (!validState(url.searchParams.get('state'), state) || consumed) {
-      res.writeHead(400).end('Invalid or already-used callback. Return to the terminal.'); return;
+      res.writeHead(400).end(`Invalid or already-used callback. Return to ${destination}.`); return;
     }
     consumed = true;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.end('Sign-in callback received. Return to your terminal to check whether the connection succeeded. You may close this tab.');
+    res.end(`Sign-in callback received. Return to ${destination} to check whether the connection succeeded. You may close this tab.`);
     settle!(url);
   });
   try {
@@ -96,27 +100,31 @@ export async function login() {
       resource, state, nonce, code_challenge_method: 'S256', code_challenge: challenge,
       ...(previous ? {} : { agent_name_hint: 'Personal AI Discord Bot' }),
     }).toString();
-    console.log('Continue with ChatGPT in your browser. Eligible requests use your existing plan allowance.');
-    console.log('You can manage app access and usage in ChatGPT Settings. This trial is only for your own Discord user.');
-    console.log(`If no browser opens, open this URL locally:\n${url.href}`);
+    message('Continue with ChatGPT in your browser. Eligible requests use your existing plan allowance.');
+    if (options.openBrowser) options.openBrowser(url.href);
+    else {
+    message('You can manage app access and usage in ChatGPT Settings. This trial is only for your own Discord user.');
+    message(`If no browser opens, open this URL locally:\n${url.href}`);
     if (process.platform === 'win32') {
       const child = spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url.href], { windowsHide: true, stdio: 'ignore' });
       child.on('error', () => {}); child.unref();
     }
-    const timeout = AbortSignal.timeout(5 * 60 * 1000);
+    }
     const returned = await new Promise<URL>((resolve, reject) => {
-      const abort = () => reject(new UserError('Sign-in timed out. Run login again.'));
-      timeout.addEventListener('abort', abort, { once: true });
-      callback.then(value => { timeout.removeEventListener('abort', abort); resolve(value); });
+      const abort = () => reject(new UserError('Sign-in was cancelled or timed out. Connect again when ready.'));
+      if (signal.aborted) { abort(); return; }
+      signal.addEventListener('abort', abort, { once: true });
+      callback.then(value => { signal.removeEventListener('abort', abort); resolve(value); });
     });
     const clientId = callbackClient(returned, state, previous?.clientId);
     const token = await tokenRequest({ grant_type: 'authorization_code', client_id: clientId,
-      code: returned.searchParams.get('code')!, code_verifier: verifier, redirect_uri: redirectUri, resource });
+      code: returned.searchParams.get('code')!, code_verifier: verifier, redirect_uri: redirectUri, resource },signal);
     if (!token.id_token) throw new UserError('ChatGPT did not return an identity token.');
     const subject = await validateIdentity(token.id_token, clientId, nonce, previous?.subject);
     const fields = tokenFields(token);
+    signal.throwIfAborted();
     saveCredential({ clientId, subject, idToken: token.id_token, refreshToken: token.refresh_token, ...fields });
-    console.log('ChatGPT plan permission validated and connection protected with Windows DPAPI. No model request has been made yet.');
+    message('ChatGPT plan permission validated and connection protected with Windows DPAPI. No model request has been made yet.');
   } finally { server.close(); server.closeAllConnections(); }
 }
 
@@ -139,7 +147,7 @@ export async function accessToken(): Promise<string> {
   return (await refreshing).accessToken;
 }
 
-export async function logout() {
+export async function logout(message: (message: string) => void = console.log) {
   const saved = readCredential();
   let revoked = !saved;
   try {
@@ -156,6 +164,6 @@ export async function logout() {
     }
   } catch { revoked = false; }
   finally { clearCredential(); }
-  console.log(revoked ? 'Disconnected and renewable session revoked.'
+  message(revoked ? 'Disconnected and renewable session revoked.'
     : 'Local credentials deleted. Remote revocation was not confirmed: disconnect this app in ChatGPT Settings > Security and login > Sign in with ChatGPT.');
 }
