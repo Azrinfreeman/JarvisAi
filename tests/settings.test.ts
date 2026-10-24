@@ -72,7 +72,9 @@ test('corrupted settings or encrypted credentials fail closed',() => fixture(sto
   store.update({revision:'legacy',values:{RAIN_VOLUME:'0.2'}});
   const doc=JSON.parse(readFileSync(join(store.directory,'settings.json'),'utf8'));
   writeFileSync(join(store.directory,doc.secretsFile),'broken');
-  assert.throws(() => store.view(),/credentials/);
+  const view=store.view();
+  assert.equal(view.credentialsUnreadable,true);
+  assert.deepEqual(view.secrets,{DISCORD_BOT_TOKEN:false,OPENAI_API_KEY:false});
   writeFileSync(join(store.directory,'settings.json'),JSON.stringify({...doc,secretsFile:'../../.env'}));
   assert.throws(() => store.effective(),/unreadable/);
 }));

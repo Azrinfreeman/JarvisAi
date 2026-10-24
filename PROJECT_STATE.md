@@ -1,6 +1,12 @@
 # Combined Jarvis + Sleep Companion — Project State
 
-Last updated: **24 October 2026 (MYT, UTC+08:00)**.
+Last updated: **25 October 2026 (MYT, UTC+08:00)**.
+
+## Latest checkpoint — unreadable saved credentials no longer block startup
+
+`npm start` failed because the DPAPI-encrypted dashboard credentials (`data/dashboard/secrets-*.dpapi`, `control.dpapi`) could no longer be decrypted under the current Windows account (key invalid, likely after an OS reinstall/upgrade). `SettingsStore.secrets()` in `src/settings.ts` now falls back to the environment/`.env` with a warning instead of throwing, sets `credentialsUnreadable`, and exposes it in `view()`; `missing()` still blocks startup for any credential not found. Corrupt `settings.json` still fails closed. `tests/settings.test.ts` was updated and the settings tests and `tsc --noEmit` pass.
+
+Locally, the unreadable `settings.json`, `settings.previous.json` and `secrets-*.dpapi` were moved to the git-ignored `data/dashboard-unreadable-backup/`; the bot now reads `.env`. Any dashboard-saved OpenAI API key was lost and must be re-entered. Not yet done: a dashboard/desktop notice for `credentialsUnreadable`, and true portability (Linux/Docker, passphrase-based encryption instead of DPAPI; `data/ai/chatgpt.dpapi` still needs `npm run auth` on a new machine). Live bot login after this fix was not confirmed.
 
 ## Latest checkpoint — Windows desktop application
 

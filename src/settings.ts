@@ -40,6 +40,7 @@ export function validateValues(values: Partial<Values>) {
 
 export class SettingsStore {
   readonly directory: string;
+  credentialsUnreadable = false;
   constructor(readonly root = projectRoot, private inherited: NodeJS.ProcessEnv = { ...process.env }, private codec = protect) {
     this.directory = join(root, 'data/dashboard');
   }
@@ -66,7 +67,12 @@ export class SettingsStore {
       const secrets = JSON.parse(this.codec(readFileSync(join(this.directory, doc.secretsFile), 'utf8'), true));
       if (!isRecord(secrets) || !ownKeys(secrets, secretKeys) || Object.values(secrets).some(value => typeof value !== 'string' || !value)) throw new Error();
       return secrets;
-    } catch { throw new UserError('Unable to read saved credentials. Use the Windows account that saved them or restore the previous settings revision.'); }
+    } catch {
+      // Saved credentials are bound to the Windows account that wrote them. Fall back to the environment/.env
+      // instead of blocking startup; missing() still reports anything that cannot be found there.
+      this.credentialsUnreadable = true;
+      return {};
+    }
   }
   effective() {
     const doc = this.document();
@@ -74,7 +80,9 @@ export class SettingsStore {
     // Preserve legacy path/audio options, but inherited environment remains authoritative.
     const env: NodeJS.ProcessEnv = { ...legacy, ...defaults, ...doc?.values };
     for (const key of valueKeys) env[key] = (this.inherited[key] ?? doc?.values[key] ?? legacy[key] ?? defaults[key]).trim();
+    this.credentialsUnreadable = false;
     const secrets = this.secrets(doc);
+    if (this.credentialsUnreadable) console.warn('Saved credentials cannot be decrypted on this PC/account; using .env or environment variables. Re-enter them in Settings to save them for this account.');
     for (const key of secretKeys) {
       env[key] = this.inherited[key] ?? (key === 'DISCORD_BOT_TOKEN' ? this.inherited.DISCORD_TOKEN : undefined) ?? (doc?.removed.includes(key) ? undefined : secrets[key] ?? legacy[key]);
     }
@@ -98,7 +106,7 @@ export class SettingsStore {
     return { values, revision: savedRevision, effectiveRevision: revision,
       secrets: Object.fromEntries(secretKeys.map(key => [key, !!env[key] && !env[key]!.startsWith('replace-with-')])),
       overridden: [...valueKeys, ...secretKeys].filter(key => this.inherited[key] !== undefined || key === 'DISCORD_BOT_TOKEN' && this.inherited.DISCORD_TOKEN !== undefined),
-      missing: this.missing(env) };
+      missing: this.missing(env), credentialsUnreadable: this.credentialsUnreadable };
   }
   missing(env = this.effective().env) {
     const required = ['DISCORD_BOT_TOKEN','DISCORD_APPLICATION_ID','DISCORD_GUILD_ID','OWNER_DISCORD_ID'];
