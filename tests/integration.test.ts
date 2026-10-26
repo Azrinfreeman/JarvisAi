@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,23 @@ import { SessionManager } from '../src/sleep/session/session-manager.js';
 const identity = {guildId:'111111111111111111',channelId:'222222222222222222',userId:'333333333333333333',visibility:'private' as const};
 let event = 444444444444444440n;
 const input = (prompt = 'Hello'): AskInput => ({identity,prompt,eventKey:`interaction:555555555555555555:${event++}`});
+test('unreadable saved connection leaves AI unavailable without a restart loop', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'combined-credential-'));
+  writeFileSync(join(dir, 'chatgpt.dpapi'), 'invalid-encrypted-credential');
+  const client = new AIClient({env:{...process.env, AI_PROVIDER:'chatgpt', AI_DATA_DIR:dir}, restartMs:20});
+  const phases: string[] = [];
+  client.on('status', status => phases.push(status.phase));
+  client.start();
+  try {
+    const timeout = AbortSignal.timeout(30000);
+    while (client.status.phase !== 'unavailable') await once(client, 'status', {signal:timeout});
+    assert.match(client.status.label, /npm run auth -- login/);
+    while (client.workerPid) await delay(50);
+    await delay(200);
+    assert.deepEqual(phases, ['starting', 'unavailable']);
+    assert.equal(client.workerPid, undefined);
+  } finally { await close(client, dir); }
+});
 async function ready(client: AIClient) {
   const timeout = AbortSignal.timeout(20000);
   while (client.status.phase !== 'ready') await once(client,'status',{signal:timeout});

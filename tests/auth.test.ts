@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPair, SignJWT, type JWTVerifyGetKey } from 'jose';
-import { callbackClient, tokenFields, validateIdentity, validState } from '../src/auth.js';
+import { callbackClient, credentialForLogin, tokenFields, validateIdentity, validState } from '../src/auth.js';
+import { CredentialReadError } from '../src/errors.js';
 import { protect } from '../src/vault.js';
+
+test('fresh login recovers unreadable credentials but preserves unexpected failures', () => {
+  const messages: string[] = [];
+  assert.equal(credentialForLogin(text => messages.push(text), () => { throw new CredentialReadError('locked'); }), undefined);
+  assert.match(messages[0]!, /only be replaced after successful validation/);
+  assert.throws(() => credentialForLogin(() => {}, () => { throw new Error('unexpected'); }), /unexpected/);
+});
 
 test('callback validates state, consent, issued registration and returning client binding', () => {
   const url = new URL('http://127.0.0.1:1234/auth/callback?state=expected&code=code&client_id=oaiapp_trial');

@@ -4,7 +4,7 @@ import { Conversations } from '../storage.js';
 import { ChatGPTProvider, StubProvider, listModels } from '../provider.js';
 import { reasoningEffort } from '../config.js';
 import { dataDir, runtimeLock } from '../vault.js';
-import { UserError, safeError } from '../errors.js';
+import { UserError, CredentialReadError, safeError } from '../errors.js';
 import { responseMessages } from '../responses.js';
 import { botInstructions } from '../personality.js';
 import type { ReferencedInput } from '../replies.js';
@@ -121,5 +121,5 @@ try {
 } catch(error) {
   state('unavailable',safeError(error));
   // Give the parent time to receive the status before the supervised restart.
-  setTimeout(() => process.exit(1),100);
+  setTimeout(() => process.exit(error instanceof CredentialReadError ? 78 : 1),100);
 }

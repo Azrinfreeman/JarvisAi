@@ -9,9 +9,37 @@ import { DesktopController } from '../src/desktop/controller.js';
 import { InstallationImport } from '../src/desktop/migration.js';
 import { authURL, resourcePath, validSender, validateRequest } from '../desktop/security.mjs';
 import { login } from '../src/auth.js';
+import { execFileSync } from 'node:child_process';
 
 const codec=(value: string)=>value;
 const ids={DISCORD_APPLICATION_ID:'123456789012345678',DISCORD_GUILD_ID:'223456789012345678',OWNER_DISCORD_ID:'323456789012345678'};
+
+test('switch account starts fresh registration and cancelled sign-in preserves unreadable saved connection', () => {
+  const root=mkdtempSync(join(tmpdir(),'rainbot-switch-'));
+  const saved=join(root,'chatgpt.dpapi');
+  writeFileSync(saved,'synthetic-unreadable-connection');
+  try {
+    const script=`
+      import assert from 'node:assert/strict';
+      import { login } from ${JSON.stringify(new URL('../src/auth.ts',import.meta.url).href)};
+      const controller=new AbortController();
+      let opened=false;
+      await assert.rejects(login({newAccount:true,signal:controller.signal,message:()=>{},openBrowser:value=>{
+        const url=new URL(value);
+        assert.equal(url.searchParams.get('client_id'),'dynamic_agent_client');
+        assert.ok(url.searchParams.get('agent_name_hint'));
+        assert.ok(url.searchParams.get('state'));
+        assert.ok(url.searchParams.get('code_challenge'));
+        opened=true;controller.abort();
+      }}),/cancelled/);
+      assert.equal(opened,true);
+    `;
+    execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',script],{
+      env:{...process.env,AI_DATA_DIR:root},timeout:15000,stdio:'pipe',windowsHide:true,
+    });
+    assert.equal(readFileSync(saved,'utf8'),'synthetic-unreadable-connection');
+  } finally {rmSync(root,{recursive:true,force:true});}
+});
 test('cancelled sign-in does not open a browser, read credentials, or contact a provider',async()=>{
   let opened=false;
   await assert.rejects(login({signal:AbortSignal.abort(),openBrowser:()=>{opened=true;}}),/cancelled/);
@@ -20,6 +48,8 @@ test('cancelled sign-in does not open a browser, read credentials, or contact a 
 test('desktop bridge rejects unknown operations, arbitrary arguments and foreign/subframe senders',()=>{
   assert.throws(()=>validateRequest('exec',{command:'anything'}));
   assert.throws(()=>validateRequest('start',{pid:123}));
+  validateRequest('authSwitch',{});
+  assert.throws(()=>validateRequest('authSwitch',{newAccount:'anything'}));
   assert.throws(()=>validateRequest('saveSettings',{large:'x'.repeat(20000)}));
   assert.throws(()=>validateRequest('importCommit',{source:'C:/private'}));
   validateRequest('operation',{id:'12345678-1234-1234-1234-123456789012'});

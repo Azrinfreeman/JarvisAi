@@ -426,10 +426,12 @@ setInterval(() => { if (!document.hidden && csrf) void refreshManagement(); },10
 function updateDesktopActions() {
   if(!window.rainbot)return;
   const api=$('ai-provider').value === 'openai';
-  for(const id of ['connect-chatgpt','disconnect-chatgpt','desktop-auth-status'])$(id).hidden=api;
+  for(const id of ['connect-chatgpt','switch-chatgpt','disconnect-chatgpt','desktop-auth-status','chatgpt-account-help'])$(id).hidden=api;
+  $('connect-chatgpt').textContent=chatgptConnected ? 'Reconnect ChatGPT' : 'Connect ChatGPT';
   document.querySelectorAll('.desktop-action').forEach(button=>{button.disabled=setupBusy || settingsDirty || savingSettings;});
   const stopped=management?.state === 'stopped';
   $('connect-chatgpt').disabled ||= !stopped;
+  $('switch-chatgpt').disabled ||= !stopped;
   $('disconnect-chatgpt').disabled ||= !stopped || !chatgptConnected;
   $('import-installation').disabled ||= !stopped || !settingsData || settingsData.revision !== 'legacy';
 }
@@ -441,20 +443,21 @@ async function refreshDesktopAuth() {
   } catch {$('desktop-auth-status').textContent='Connection unavailable';}
   updateDesktopActions();
 }
-async function desktopAction(work, login = false) {
+async function desktopAction(work, login = false, switching = false) {
   if(setupBusy || settingsDirty)return;
   setupBusy=true;form.inert=true;updateDesktopActions();$('cancel-chatgpt').hidden=!login;
   const feedback=$('desktop-setup-feedback');feedback.hidden=false;
-  feedback.textContent=login ? 'Continue in your browser. You can cancel sign-in here.' : 'Working…';
+  feedback.textContent=login ? (switching ? 'Choose the ChatGPT account you want in your browser. If the old account is selected, sign out there first. Your saved connection stays until sign-in succeeds. You can cancel here.' : 'Continue in your browser to connect or reconnect ChatGPT. You can cancel sign-in here.') : 'Working…';
   try {const result=await work();feedback.textContent=result?.message || '';}
   catch(error) {feedback.textContent=error.message;}
   finally {setupBusy=false;form.inert=false;$('cancel-chatgpt').hidden=true;await loadSettings();await refreshManagement(true);await refreshDesktopAuth();}
 }
 if(window.rainbot) {
   document.title='RainBot';$('desktop-setup').hidden=false;
-  document.querySelector('#chatgpt-settings .field-help').textContent='Stop the bot, then use Connect ChatGPT above. Account eligibility is required.';
+  document.querySelector('#chatgpt-settings .field-help').textContent='Stop the bot, then connect, reconnect, or choose a different ChatGPT account above. Account eligibility is required.';
   $('register-commands').addEventListener('click',()=>void desktopAction(()=>window.rainbot.registerCommands()));
   $('connect-chatgpt').addEventListener('click',()=>void desktopAction(()=>window.rainbot.authConnect(),true));
+  $('switch-chatgpt').addEventListener('click',()=>void desktopAction(()=>window.rainbot.authSwitch(),true,true));
   $('disconnect-chatgpt').addEventListener('click',()=>void desktopAction(()=>window.rainbot.authDisconnect()));
   $('cancel-chatgpt').addEventListener('click',()=>void window.rainbot.authCancel().catch(error=>toast(error.message)));
   const review=document.createElement('dialog');review.className='connect-dialog';

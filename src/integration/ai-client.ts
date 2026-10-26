@@ -36,23 +36,25 @@ export class AIClient extends EventEmitter {
       stdio:['ignore','ignore','ignore','ipc'], serialization:'advanced', windowsHide:true,
     });
     this.child = child;
-    const failed = () => {
+    const failed = (needsSignIn = false) => {
       if (this.child !== child) return;
       this.child = undefined;
       child.removeAllListeners('message');
       for (const [id,p] of this.requests) { clearTimeout(p.timer); p.controller.abort(); p.reject(new UserError('AI worker restarted. Send a new question; sleep playback continues.')); this.requests.delete(id); }
       if (this.stopped) return;
+      // A Windows credential failure needs a fresh sign-in, not another worker.
+      if (needsSignIn) return;
       this.update({phase:'restarting',label:'AI unavailable; reconnecting. Sleep controls remain available.'});
       const delay = this.options.restartMs ?? Math.min(60000,2000 * 2 ** Math.min(this.failures++,5));
       this.retry = setTimeout(() => this.start(),delay);
     };
     child.once('error',() => { if (child.pid) child.kill(); else failed(); });
-    child.once('exit',() => {
+    child.once('exit',code => {
       // Only this exact, now-exited child may have its orphaned lock removed.
       // Never clear a lock owned by auth, another worker, or an unrelated PID.
       const lock = join(resolve(env.AI_DATA_DIR || join(stateRoot,'data/ai')),'runtime.lock');
       try { if (child.pid && readFileSync(lock,'utf8').trim() === String(child.pid)) unlinkSync(lock); } catch {}
-      failed();
+      failed(code === 78);
     });
     child.on('message',raw => {
       if (this.child !== child || !validFromWorker(raw)) return;

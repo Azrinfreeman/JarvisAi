@@ -21,12 +21,19 @@ export async function runSmoke({window,request,stateRoot,focus,tray}) {
   const painted=()=>js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   await wait('document.getElementById("settings-form").hidden === false && document.getElementById("bot-control").textContent.includes("Complete setup")');
   console.log('Desktop smoke: window and controller ready.');
+  assert.equal(await js('typeof window.rainbot.authSwitch'),'function');
+  assert.equal(await js('document.getElementById("switch-chatgpt").textContent'),'Use a different ChatGPT account');
   assert.equal(await js('typeof require'),'undefined');
   assert.equal(await js('typeof window.rainbot.exec'),'undefined');
   assert.equal(await js('typeof window.rainbot.request'),'undefined');
   await js('location.hash="settings"');
   await wait('document.getElementById("page-settings").hidden === false');
   console.log('Desktop smoke: settings view ready.');
+  await wait('document.getElementById("switch-chatgpt").hidden === false && document.getElementById("switch-chatgpt").disabled === false');
+  await js('document.getElementById("desktop-setup").scrollIntoView({block:"center"})');
+  await new Promise(resolve=>setTimeout(resolve,350));
+  await painted();
+  await writeFile(join(output,'chatgpt-accounts.png'),(await window.webContents.capturePage()).toPNG());
   await js(`(() => {
     const values={DISCORD_APPLICATION_ID:'123456789012345678',DISCORD_GUILD_ID:'223456789012345678',OWNER_DISCORD_ID:'323456789012345678',AI_PROVIDER:'openai',OPENAI_MODEL:'test-model',OPENAI_API_KEY:'synthetic-desktop-key'};
     for(const [key,value] of Object.entries(values)){const input=document.getElementById('settings-form').elements.namedItem(key);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}

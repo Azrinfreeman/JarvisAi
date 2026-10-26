@@ -1,4 +1,5 @@
 export class UserError extends Error {}
+export class CredentialReadError extends UserError {}
 
 export function safeError(error: unknown): string {
   if (error instanceof UserError) return error.message;

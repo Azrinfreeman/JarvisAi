@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { readCredential, saveCredential, clearCredential, hostId, type Credential } from './vault.js';
-import { UserError, providerError } from './errors.js';
+import { UserError, CredentialReadError, providerError } from './errors.js';
 
 const issuer = 'https://auth.openai.com';
 const resource = 'https://api.openai.com/v1';
@@ -57,12 +57,22 @@ export function tokenFields(token: TokenResponse, previousScopes: string[] = [])
   return { accessToken: token.access_token, scopes, expiresAt: Date.now() + token.expires_in * 1000 };
 }
 
-export async function login(options: {signal?: AbortSignal; openBrowser?: (url: string) => void; message?: (message: string) => void} = {}) {
+export function credentialForLogin(message: (text: string) => void, read = readCredential): Credential | undefined {
+  try { return read(); }
+  catch (error) {
+    if (!(error instanceof CredentialReadError)) throw error;
+    message('The saved ChatGPT connection cannot be unlocked. Starting a fresh sign-in; the saved connection will only be replaced after successful validation.');
+    return undefined;
+  }
+}
+
+export async function login(options: {signal?: AbortSignal; openBrowser?: (url: string) => void; message?: (message: string) => void; newAccount?: boolean} = {}) {
   const message = options.message ?? console.log;
   const signal = AbortSignal.any([AbortSignal.timeout(5 * 60 * 1000), ...(options.signal ? [options.signal] : [])]);
   if(signal.aborted)throw new UserError('Sign-in was cancelled. Connect again when ready.');
   const destination = options.openBrowser ? 'RainBot' : 'your terminal';
-  const previous = readCredential();
+  // Switching accounts starts a fresh registration without deleting the old grant.
+  const previous = options.newAccount ? undefined : credentialForLogin(message);
   const state = randomBytes(32).toString('base64url');
   const nonce = randomBytes(32).toString('base64url');
   const verifier = randomBytes(48).toString('base64url');
@@ -100,7 +110,9 @@ export async function login(options: {signal?: AbortSignal; openBrowser?: (url: 
       resource, state, nonce, code_challenge_method: 'S256', code_challenge: challenge,
       ...(previous ? {} : { agent_name_hint: 'Personal AI Discord Bot' }),
     }).toString();
-    message('Continue with ChatGPT in your browser. Eligible requests use your existing plan allowance.');
+    message(options.newAccount
+      ? 'Sign in with the ChatGPT account you want to use. If your browser selects the old account, sign out there and choose the new account. The saved connection is replaced only after successful sign-in.'
+      : 'Continue with ChatGPT in your browser. Eligible requests use your existing plan allowance.');
     if (options.openBrowser) options.openBrowser(url.href);
     else {
     message('You can manage app access and usage in ChatGPT Settings. This trial is only for your own Discord user.');

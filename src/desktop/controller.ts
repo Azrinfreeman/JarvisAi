@@ -45,9 +45,10 @@ export class DesktopController {
       case 'authStatus': return {connected:existsSync(join(this.settings.effective().env.AI_DATA_DIR || join(this.settings.root,'data/ai'),'chatgpt.dpapi'))};
       case 'authCancel': this.cancel(); return {message:'Cancelling sign-in…'};
       case 'authConnect':
+      case 'authSwitch':
       case 'authDisconnect': {
         if(this.login)throw new UserError('A sign-in operation is already in progress.');
-        const login=operation === 'authConnect' ? new AbortController() : undefined;
+        const login=operation !== 'authDisconnect' ? new AbortController() : undefined;
         this.login=login;
         return this.service.supervisor.exclusive(async () => {
         const status=await this.service.supervisor.status(true);
@@ -58,9 +59,9 @@ export class DesktopController {
         try {
           const auth=await import('../auth.js');
           const report=(value: string)=>{message=value;};
-          if (operation === 'authConnect') {
+          if (login) {
             login!.signal.throwIfAborted();
-            await auth.login({signal:login!.signal,message:report,openBrowser:url=>this.event({type:'authUrl',value:url})});
+            await auth.login({signal:login.signal,newAccount:operation === 'authSwitch',message:report,openBrowser:url=>this.event({type:'authUrl',value:url})});
           } else await auth.logout(report);
           return {message};
         } finally {release();}

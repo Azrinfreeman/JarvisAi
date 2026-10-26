@@ -24,7 +24,7 @@ function request(operation,argument={}) {
   if (pending.size >= 32) return Promise.reject(new Error('Too many requests. Wait for the current operation.'));
   const id=randomUUID();
   return new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>{pending.delete(id);reject(new Error('The operation has not completed. Refresh its status before retrying.'));},operation === 'authConnect' ? 330000 : 60000);
+    const timer=setTimeout(()=>{pending.delete(id);reject(new Error('The operation has not completed. Refresh its status before retrying.'));},['authConnect','authSwitch'].includes(operation) ? 330000 : 60000);
     pending.set(id,{resolve,reject,timer});
     controller.send({id,operation,argument},error=>{if(error) {clearTimeout(timer);pending.delete(id);reject(new Error('The desktop controller disconnected.'));}});
   });

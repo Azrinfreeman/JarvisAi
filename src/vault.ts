@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { stateRoot } from './app-paths.js';
-import { UserError } from './errors.js';
+import { UserError, CredentialReadError } from './errors.js';
 import { protect } from './secret-protection.js';
 export { protect } from './secret-protection.js';
 
@@ -17,7 +17,7 @@ export type Credential = {
 export function readCredential(): Credential | undefined {
   if (!existsSync(credentialPath)) return undefined;
   try { return JSON.parse(protect(readFileSync(credentialPath, 'utf8'), true)) as Credential; }
-  catch { throw new UserError('Unable to read the protected ChatGPT connection. Reconnect with your Windows account.'); }
+  catch { throw new CredentialReadError('Windows could not unlock the saved ChatGPT connection. It may belong to another Windows account or installation, or be damaged. Stop the bot, run npm run auth -- login under your current Windows account, then start the bot again.'); }
 }
 
 export function saveCredential(value: Credential) {

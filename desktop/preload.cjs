@@ -6,6 +6,6 @@ contextBridge.exposeInMainWorld('rainbot',Object.freeze({
   start:()=>call('start'),stop:()=>call('stop'),operation:id=>call('operation',{id}),
   testDiscord:()=>call('testDiscord'),testAI:()=>call('testAI'),testAIResponse:()=>call('testAIResponse'),
   registerCommands:()=>call('registerCommands'),authStatus:()=>call('authStatus'),authConnect:()=>call('authConnect'),
-  authDisconnect:()=>call('authDisconnect'),authCancel:()=>call('authCancel'),
+  authSwitch:()=>call('authSwitch'),authDisconnect:()=>call('authDisconnect'),authCancel:()=>call('authCancel'),
   importSelect:()=>call('importSelect'),importCommit:ticket=>call('importCommit',{ticket}),
 }));

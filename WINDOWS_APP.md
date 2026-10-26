@@ -15,6 +15,8 @@ Use **Test saved connection** to check saved credentials. These checks do not ge
 
 Use only one installation for a given Discord bot application. Starting a fresh profile with the same token does not transfer control of an older source installation. Stop the original first; do not run both copies together.
 
+To reconnect or change ChatGPT accounts, save your settings and stop the bot, then open **Settings → Installation**. Use **Reconnect ChatGPT** for the saved account, or **Use a different ChatGPT account** for a fresh sign-in. If the browser selects your old account, sign out there and choose the account you want. A failed or cancelled sign-in keeps the saved connection; successful sign-in replaces it. Start the bot again afterward. You can also use these actions to recover a connection that Windows can no longer unlock.
+
 ## Window and tray
 
 - Start/Stop controls manage the verified Discord frontend and AI worker together. Connection readiness is shown separately.
