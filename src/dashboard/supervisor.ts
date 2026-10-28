@@ -28,7 +28,33 @@ export class BotSupervisor {
     const locks = existsSync(frontend) ? readdirSync(frontend,{withFileTypes:true}).filter(item => item.isDirectory()).map(item => join(frontend,item.name,'runtime.lock')).filter(existsSync) : [];
     const ai = join(resolve(env.AI_DATA_DIR || join(this.settings.root,'data/ai')), 'runtime.lock');
     if (existsSync(ai)) locks.push(ai);
+    const legacy = join(this.settings.root,'data/runtime.lock');
+    if (existsSync(legacy)) locks.push(legacy);
     return locks;
+  }
+  async clearStaleLocks() {
+    if (this.busy) throw new UserError('Wait for the current bot operation to finish before clearing locks.');
+    return this.exclusive(async () => {
+      const identity = readRuntimeIdentity(this.settings.root);
+      const launched = this.launchRecord();
+      for (const pid of [identity?.pid,identity?.workerPid,launched?.pid]) {
+        if (pid !== undefined && await this.deps.inspect(pid) !== null) throw new UserError('A bot process is still running. Stop it before clearing locks.');
+      }
+      const locks = this.lockPaths(this.settings.effective().env).map(path => {
+        const contents = readFileSync(path,'utf8');
+        const pid = Number(contents.trim());
+        if (!/^\d+$/.test(contents.trim()) || !Number.isSafeInteger(pid) || pid <= 0) throw new UserError('A runtime lock has an invalid owner. Inspect it manually before recovery.');
+        return {path,contents,pid};
+      });
+      for (const lock of locks) {
+        if (await this.deps.inspect(lock.pid) !== null) throw new UserError('A bot or authentication process still owns a lock. Stop it before clearing locks.');
+      }
+      for (const lock of locks) {
+        if (readFileSync(lock.path,'utf8') !== lock.contents) throw new UserError('A runtime lock changed during recovery. Check status and try again.');
+      }
+      for (const lock of locks) unlinkSync(lock.path);
+      return {message:locks.length ? `Cleared ${locks.length} stale runtime lock(s). You can now start the bot again.` : 'No stale runtime locks were found.', cleared:locks.length};
+    });
   }
   private launchRecord() {
     const path = join(this.settings.directory,'supervisor.json');
@@ -82,7 +108,7 @@ export class BotSupervisor {
           const process = await this.deps.inspect(pid);
           if (process) return { state:'external', message:'An existing bot or authentication process owns a runtime lock. Stop it from its terminal before using dashboard controls.', restartRequired:false, missing };
         }
-        return { state:'blocked', message:'A stale runtime lock needs verified recovery. Follow the README before removing it.', restartRequired:false, missing };
+        return { state:'blocked', message:'A stale runtime lock is blocking startup. Use Clear stale locks, then start the bot again.', restartRequired:false, missing };
       }
       const launched = this.launchRecord();
       if (launched && await this.deps.inspect(launched.pid)) return { state:'blocked', message:'A previous launch is still running without a verified control channel. Inspect it before retrying.', restartRequired:false, missing };

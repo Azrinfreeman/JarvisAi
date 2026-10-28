@@ -73,6 +73,60 @@ test('foreign locks and stale locks block Start without deletion or another laun
   assert.equal((await external.status()).state,'external');
 }));
 
+test('explicit recovery clears stale runtime locks and allows startup',async () => fixture(async ctx => {
+  const paths=[join(ctx.root,'data/ai/runtime.lock'),join(ctx.root,`data/frontend/${id}/runtime.lock`),join(ctx.root,'data/runtime.lock')];
+  for (const path of paths) {
+    mkdirSync(join(path,'..'),{recursive:true});
+    writeFileSync(path,'333');
+  }
+  const supervisor=new BotSupervisor(ctx.settings,ctx.dependencies);
+  assert.equal((await supervisor.clearStaleLocks()).cleared,3);
+  assert.ok(paths.every(path => !existsSync(path)));
+  assert.equal((await supervisor.status()).state,'stopped');
+  assert.equal((await finish(supervisor,supervisor.begin('start'))).status,'completed');
+  assert.equal(ctx.launches,1);
+}));
+
+test('recovery preserves all locks if any owner is alive or cannot be inspected',async () => fixture(async ctx => {
+  const stale=join(ctx.root,'data/runtime.lock');
+  const active=join(ctx.root,'data/ai/runtime.lock');
+  mkdirSync(join(active,'..'),{recursive:true});
+  writeFileSync(stale,'333'); writeFileSync(active,'222');
+  for (const inspect of [async (pid: number) => pid === 222 ? ctx.info(pid) : null,async () => {throw new Error('Process access denied');}]) {
+    const supervisor=new BotSupervisor(ctx.settings,{...ctx.dependencies,inspect});
+    await assert.rejects(supervisor.clearStaleLocks());
+    assert.ok(existsSync(stale)); assert.ok(existsSync(active));
+  }
+}));
+
+test('recovery rejects invalid and changed locks',async () => fixture(async ctx => {
+  const path=join(ctx.root,'data/runtime.lock');
+  writeFileSync(path,'invalid');
+  const supervisor=new BotSupervisor(ctx.settings,ctx.dependencies);
+  await assert.rejects(supervisor.clearStaleLocks(),/invalid owner/);
+  writeFileSync(path,'333');
+  const changed=new BotSupervisor(ctx.settings,{...ctx.dependencies,inspect:async () => {writeFileSync(path,'444');return null;}});
+  await assert.rejects(changed.clearStaleLocks(),/changed during recovery/);
+  assert.equal(readFileSync(path,'utf8'),'444');
+}));
+
+test('recovery rejects active recorded launches and pending operations',async () => fixture(async ctx => {
+  const supervisor=new BotSupervisor(ctx.settings,ctx.dependencies);
+  const operation=supervisor.begin('start');
+  await assert.rejects(supervisor.clearStaleLocks(),/current bot operation/);
+  await finish(supervisor,operation);
+  await assert.rejects(supervisor.clearStaleLocks(),/still running/);
+  assert.ok(existsSync(join(ctx.root,`data/frontend/${id}/runtime.lock`)));
+}));
+
+test('recovery with no runtime locks leaves settings locks untouched',async () => fixture(async ctx => {
+  const path=join(ctx.settings.directory,'settings.lock');
+  writeFileSync(path,'');
+  const supervisor=new BotSupervisor(ctx.settings,ctx.dependencies);
+  assert.equal((await supervisor.clearStaleLocks()).cleared,0);
+  assert.ok(existsSync(path));
+}));
+
 test('PID reuse, wrong directory, wrong entry, and worker parent mismatch reject Stop',async () => fixture(async ctx => {
   await ctx.dependencies.launch();
   for (const patch of [

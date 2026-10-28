@@ -6,7 +6,7 @@ import { SettingsStore, isRecord } from '../settings.js';
 import { OwnerSessions } from './sessions.js';
 import { BotSupervisor } from './supervisor.js';
 import { safeError, UserError } from '../errors.js';
-import { DashboardService } from './service.js';
+import { DashboardService, emptyRequest } from './service.js';
 import { stateRoot } from '../app-paths.js';
 
 const root = stateRoot;
@@ -121,6 +121,10 @@ export function createDashboardServer(statusPath?: string, options: { settings?:
         if (path === '/api/settings' && req.method === 'PUT') {
           const body = await jsonBody(req);
           json(200,await service.save(body)); return;
+        }
+        if (path === '/api/bot/clear-stale-locks' && req.method === 'POST') {
+          emptyRequest(await jsonBody(req));
+          json(200,await supervisor.clearStaleLocks()); return;
         }
         if ((path === '/api/bot/start' || path === '/api/bot/stop') && req.method === 'POST') {
           const body = await jsonBody(req);

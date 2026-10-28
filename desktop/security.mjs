@@ -2,7 +2,7 @@ import { resolve, join, relative, isAbsolute } from 'node:path';
 
 export const appURL = 'rainbot://app/';
 export const allowedOperations = new Set(['status','settings','saveSettings','management','freshManagement','start','stop','operation',
-  'testDiscord','testAI','testAIResponse','registerCommands','authStatus','authConnect','authSwitch','authDisconnect','authCancel','importSelect','importCommit']);
+  'clearStaleLocks','testDiscord','testAI','testAIResponse','registerCommands','authStatus','authConnect','authSwitch','authDisconnect','authCancel','importSelect','importCommit']);
 export function validSender(event, window) {
   return !!window && event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame
     && event.senderFrame.url.split('#')[0] === appURL;

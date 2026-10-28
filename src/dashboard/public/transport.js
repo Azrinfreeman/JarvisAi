@@ -12,6 +12,7 @@ window.rainbotRequest = async (path, options = {}) => {
     'GET /api/management?fresh=1':()=>window.rainbot.freshManagement(),
     'POST /api/bot/start':()=>window.rainbot.start(),
     'POST /api/bot/stop':()=>window.rainbot.stop(),
+    'POST /api/bot/clear-stale-locks':()=>window.rainbot.clearStaleLocks(),
     'POST /api/settings/test-discord':()=>window.rainbot.testDiscord(),
     'POST /api/settings/test-ai':()=>window.rainbot.testAI(),
     'POST /api/settings/test-ai-response':()=>window.rainbot.testAIResponse(),

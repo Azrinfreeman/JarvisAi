@@ -32,6 +32,7 @@ export class DesktopController {
         if (existsSync(join(this.settings.root,'data/import.pending'))) throw new UserError('An interrupted import needs recovery before starting.');
         return this.service.supervisor.begin('start');
       case 'stop': return this.service.supervisor.begin('stop');
+      case 'clearStaleLocks': return this.service.supervisor.clearStaleLocks();
       case 'operation': {
         if (Object.keys(argument).length !== 1 || typeof argument.id !== 'string' || !/^[a-f\d-]{36}$/.test(argument.id)) throw new UserError('Invalid operation ID.');
         const operation=this.service.supervisor.getOperation(argument.id);

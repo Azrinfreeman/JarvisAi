@@ -1,6 +1,18 @@
 # Combined Jarvis + Sleep Companion — Project State
 
-Last updated: **25 October 2026 (MYT, UTC+08:00)**.
+Last updated: **28 October 2026 (MYT, UTC+08:00)**.
+
+## Latest checkpoint — stale runtime lock recovery and rebuilt installer
+
+Added **Clear stale locks** to the desktop app and authenticated dashboard status notice for startup blocked by leftover `.lock` files. The supervisor explicitly checks recorded frontend/worker/launch processes and each runtime lock owner before removing frontend, AI, or legacy `data/runtime.lock` files. Recovery refuses active processes, invalid PID records, unavailable process inspection, changed lock contents, and pending bot operations. It uses the existing exclusive supervisor operation lock. Settings locks, dependency lockfiles, credentials, and history are preserved; recovery does not automatically start or stop the bot.
+
+The fixed desktop preload/IPC allowlist, controller, browser transport, authenticated POST endpoint, and shared UI are connected. README and Windows app recovery instructions were updated. Added five supervisor regression cases covering successful recovery and startup, active/unverifiable owners, invalid/changed locks, active launches/pending operations, and unrelated settings lock preservation. TypeScript checks, JavaScript syntax checks, and the full **160/160 tests passed**.
+
+Rebuilt staged resources and the Windows x64 Squirrel installer with `npm run desktop:prepare` and `npm run desktop:make`. The installer at `desktop/out/make/squirrel.windows/x64/RainBotSetup.exe` is **275,325,440 bytes (262.6 MiB)** and **NotSigned**. Packaged checks passed native Sharp/Opus/SQLite loading, GUI startup using bundled Node with system Node absent from PATH, private-data exclusion, single-instance behavior, and controller exit. Confirmed the packaged UI and backend contain lock recovery. Generated installers, staging resources, disposable QA profiles, and results remain Git-ignored. The installer retains version 0.1.0; clean-machine installation/update/uninstall verification remains outstanding. Use **Stop bot and quit** before installing. No production lock cleanup or bot start/stop was performed for this feature/build.
+
+Installer SHA-256: `59A832DB5B75A7B6F8131A9435EF8286963BC645E8CDFA5FBC6941F5A35BC21D`.
+
+The owner requested saving this checkpoint, committing the implementation/documentation/tests, and pushing the current branch on 28 October 2026.
 
 ## Latest checkpoint — unreadable saved credentials no longer block startup
 

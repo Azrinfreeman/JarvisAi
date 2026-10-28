@@ -352,6 +352,7 @@ document.querySelectorAll('[data-test]').forEach(button => button.addEventListen
 }));
 function renderManagement(value) {
   management=value;
+  $('clear-stale-locks').hidden=!['blocked','stopped','external'].includes(value.state);
   const control=$('bot-control');
   const busy=value.state === 'starting' || value.state === 'stopping';
   const label=busy ? value.state === 'starting' ? 'Starting…' : 'Stopping…' : value.state === 'running' ? 'Stop bot' : value.state === 'stopped' ? value.missing.length ? 'Complete setup' : 'Start bot' : value.state === 'external' ? 'Externally managed' : 'Controls unavailable';
@@ -400,6 +401,16 @@ $('bot-control').addEventListener('click', async () => {
   } catch(error) { toast(error.message); await refreshManagement(); }
 });
 $('reload-management').addEventListener('click',() => void refreshManagement());
+$('clear-stale-locks').addEventListener('click',async () => {
+  const button=$('clear-stale-locks');
+  button.disabled=true;
+  try {
+    const result=await adminRequest('/api/bot/clear-stale-locks','POST',{});
+    toast(result.message);
+    await refreshManagement(true);
+  } catch(error) { toast(error.message); }
+  finally { button.disabled=false; }
+});
 $('refresh').addEventListener('click',() => void refreshManagement());
 window.addEventListener('beforeunload',event => { if (settingsDirty) { event.preventDefault(); event.returnValue=''; } });
 window.addEventListener('hashchange',() => {
