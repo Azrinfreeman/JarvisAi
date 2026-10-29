@@ -5,6 +5,7 @@ import type { ReasoningEffort } from './config.js';
 import { botInstructions } from './personality.js';
 import { renderWebCitations, webSearchInstructions } from './web-search.js';
 import { nicknameGuidance, nicknameTool, validNicknameRequest, type NicknameRequest } from './nickname-request.js';
+import { voiceSummaryInstructions, validVoiceSummaryInput } from './voice-summary/summary.js';
 
 export type ProviderMessage = Omit<Message, 'content'> & { content: string | Array<
   { type: 'input_text'; text: string } | { type: 'input_image'; image_url: string; detail: 'auto' }
@@ -12,8 +13,19 @@ export type ProviderMessage = Omit<Message, 'content'> & { content: string | Arr
 export interface Provider {
   generate(messages: ProviderMessage[], signal: AbortSignal, options?: GenerationOptions): Promise<string>;
 }
-export type GenerationOptions={nickname?:{request:NicknameRequest;execute:(request:NicknameRequest,signal:AbortSignal)=>Promise<string>}};
+export type GenerationOptions =
+  | { mode: 'voice_summary'; nickname?: never }
+  | { mode?: undefined; nickname?: { request: NicknameRequest; execute: (request: NicknameRequest, signal: AbortSignal) => Promise<string> } };
 export type Model = { slug: string; display_name: string };
+
+function summaryInput(messages: ProviderMessage[]) {
+  let input: unknown;
+  if (messages.length === 1 && messages[0]?.role === 'user' && typeof messages[0].content === 'string') {
+    try { input = JSON.parse(messages[0].content); } catch {}
+  }
+  if (!validVoiceSummaryInput(input)) throw new UserError('Voice summaries require a single validated transcript, without chat history.');
+  return input;
+}
 
 export async function listModels(): Promise<Model[]> {
   const token = await accessToken();
@@ -129,16 +141,19 @@ export class ChatGPTProvider implements Provider {
     private reasoningEffort?: ReasoningEffort, private getInstructions = botInstructions,
     private api?: { webSearch: boolean; errorFor: typeof providerError }) {}
   async generate(messages: ProviderMessage[], signal: AbortSignal, options:GenerationOptions={}): Promise<string> {
+    const summary = options.mode === 'voice_summary';
+    if (summary && options.nickname !== undefined) throw new UserError('Voice summaries cannot include nickname actions.');
+    if (summary) summaryInput(messages);
     const action=options.nickname;
     const searchInstructions = !this.api || this.api.webSearch ? webSearchInstructions : 'Web search is disabled for this connection. Do not claim to have searched or verified online sources.';
-    const instructions = `${this.getInstructions()}\n\n${nicknameGuidance}${action?'\nThe current direct request has one exact nickname capability. Call change_server_nickname once to perform it; do not answer that it is done yourself.':''}\n\n${searchInstructions}`;
+    const instructions = summary ? voiceSummaryInstructions : `${this.getInstructions()}\n\n${nicknameGuidance}${action?'\nThe current direct request has one exact nickname capability. Call change_server_nickname once to perform it; do not answer that it is done yourself.':''}\n\n${searchInstructions}`;
     const token = await this.getToken();
     const response = await this.request('https://api.openai.com/v1/responses', {
       method: 'POST', redirect: 'error', signal,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: this.model, input: messages, store: false, stream: true,
-        tools: [...(!this.api || this.api.webSearch ? [{ type: 'web_search' }] : []),...(action?[nicknameTool(action.request)]:[])],
-        ...(action ? { tool_choice:{type:'function',name:'change_server_nickname'} } : !this.api || this.api.webSearch ? {tool_choice:'auto'} : {}),
+        tools: summary ? [] : [...(!this.api || this.api.webSearch ? [{ type: 'web_search' }] : []),...(action?[nicknameTool(action.request)]:[])],
+        ...(summary ? {} : action ? { tool_choice:{type:'function',name:'change_server_nickname'} } : !this.api || this.api.webSearch ? {tool_choice:'auto'} : {}),
         ...(action?{parallel_tool_calls:false}:{}),
         ...(this.reasoningEffort ? { reasoning: { effort: this.reasoningEffort } } : {}),
         ...(this.api ? { max_output_tokens: 4000 } : {}),
@@ -161,7 +176,13 @@ export class ChatGPTProvider implements Provider {
 }
 
 export class StubProvider implements Provider {
-  async generate(messages: ProviderMessage[]): Promise<string> {
+  async generate(messages: ProviderMessage[], signal?: AbortSignal, options: GenerationOptions = {}): Promise<string> {
+    signal?.throwIfAborted();
+    if (options.mode === 'voice_summary') {
+      if (options.nickname !== undefined) throw new UserError('Voice summaries cannot include nickname actions.');
+      const input = summaryInput(messages);
+      return JSON.stringify({ bullets: [{ text: 'Mod stub luar talian: tiada permintaan AI atau ringkasan sebenar dijana.', sources: [input.segments[0]!.id] }], unclear: [] });
+    }
     const content = messages.at(-1)?.content ?? '';
     const text = typeof content === 'string' ? content : content.map(part => part.type === 'input_text' ? part.text : '[Image received]').join('\n');
     return `[Offline stub — no AI request made]\n${text}`;

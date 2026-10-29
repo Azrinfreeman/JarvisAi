@@ -1,5 +1,5 @@
 export const aiCommands = new Set(['ask','reset','status','help']);
-export const commandOwner = (name: string) => name === 'sleep' ? 'sleep' : name==='nickname' ? 'nickname' : aiCommands.has(name) ? 'ai' : undefined;
+export const commandOwner = (name: string) => name === 'sleep' ? 'sleep' : name==='voice-summary' ? 'voice-summary' : name==='nickname' ? 'nickname' : aiCommands.has(name) ? 'ai' : undefined;
 export class DispatchGate {
   private seen = new Map<string,number>();
   claim(key: string) {

@@ -1,7 +1,7 @@
 {
   "name": "rainbot-desktop",
   "productName": "RainBot",
-  "version": "0.1.0",
+  "version": "0.3.2",
   "private": true,
   "description": "Personal Discord companion and ambience controls",
   "author": "RainBot contributors",

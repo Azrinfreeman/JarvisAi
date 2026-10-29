@@ -9,8 +9,10 @@ import { UserError } from './errors.js';
 export const projectRoot = stateRoot;
 export const valueKeys = ['DISCORD_APPLICATION_ID','DISCORD_GUILD_ID','OWNER_DISCORD_ID','ACCESS_MODE',
   'ALLOWED_CHANNEL_IDS','ALLOWED_ROLE_IDS','CONTROLLER_ROLE_IDS','RAIN_VOLUME','AI_PROVIDER',
-  'CHATGPT_MODEL','CHATGPT_REASONING_EFFORT','OPENAI_MODEL','OPENAI_REASONING_EFFORT','OPENAI_WEB_SEARCH'] as const;
-export const secretKeys = ['DISCORD_BOT_TOKEN','OPENAI_API_KEY'] as const;
+  'CHATGPT_MODEL','CHATGPT_REASONING_EFFORT','OPENAI_MODEL','OPENAI_REASONING_EFFORT','OPENAI_WEB_SEARCH',
+  'VOICE_SUMMARY_ENABLED','VOICE_SUMMARY_CONSENT_MODE','VOICE_SUMMARY_PROVIDER','VOICE_SUMMARY_LOCAL_DEVICE','VOICE_SUMMARY_MODEL','VOICE_SUMMARY_LANGUAGES','VOICE_SUMMARY_GLOSSARY',
+  'VOICE_SUMMARY_MINUTES','VOICE_SUMMARY_MONTHLY_MINUTES','VOICE_SUMMARY_LANGUAGE'] as const;
+export const secretKeys = ['DISCORD_BOT_TOKEN','OPENAI_API_KEY','VOICE_SUMMARY_API_KEY'] as const;
 const pathKeys = ['AI_DATA_DIR','SLEEP_DATABASE_PATH','SLEEP_ASSET_DIR','RAIN_ASSET_PATH','SUNNY_ASSET_PATH'] as const;
 export type ValueKey = typeof valueKeys[number];
 export type SecretKey = typeof secretKeys[number];
@@ -19,7 +21,9 @@ type Document = { version: 1; revision: string; values: Partial<Values>; secrets
 export type SettingsUpdate = { revision: string; values: Partial<Values>; secrets?: Partial<Record<SecretKey, { action: 'remove' } | { action: 'replace'; value: string }>> };
 const defaults: Values = { DISCORD_APPLICATION_ID:'', DISCORD_GUILD_ID:'', OWNER_DISCORD_ID:'', ACCESS_MODE:'owner',
   ALLOWED_CHANNEL_IDS:'', ALLOWED_ROLE_IDS:'', CONTROLLER_ROLE_IDS:'', RAIN_VOLUME:'0.2', AI_PROVIDER:'chatgpt',
-  CHATGPT_MODEL:'', CHATGPT_REASONING_EFFORT:'', OPENAI_MODEL:'', OPENAI_REASONING_EFFORT:'', OPENAI_WEB_SEARCH:'false' };
+  CHATGPT_MODEL:'', CHATGPT_REASONING_EFFORT:'', OPENAI_MODEL:'', OPENAI_REASONING_EFFORT:'', OPENAI_WEB_SEARCH:'false',
+  VOICE_SUMMARY_ENABLED:'false', VOICE_SUMMARY_CONSENT_MODE:'individual', VOICE_SUMMARY_PROVIDER:'local', VOICE_SUMMARY_LOCAL_DEVICE:'vulkan', VOICE_SUMMARY_MODEL:'gpt-transcribe', VOICE_SUMMARY_LANGUAGES:'ms,en',
+  VOICE_SUMMARY_GLOSSARY:'', VOICE_SUMMARY_MINUTES:'5', VOICE_SUMMARY_MONTHLY_MINUTES:'60', VOICE_SUMMARY_LANGUAGE:'Malay' };
 export const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const ownKeys = (value: Record<string, unknown>, allowed: readonly string[]) => Object.keys(value).every(key => allowed.includes(key));
 
@@ -35,6 +39,16 @@ export function validateValues(values: Partial<Values>) {
     if (key.endsWith('REASONING_EFFORT') && value && !['none','low','medium','high','xhigh','max'].includes(value)) throw new UserError('Choose a supported reasoning setting.');
     if (key.endsWith('_MODEL') && value && !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/.test(value)) throw new UserError('Enter a valid model identifier.');
     if (key === 'OPENAI_WEB_SEARCH' && !['true','false'].includes(value)) throw new UserError('Invalid web search setting.');
+    if (key === 'VOICE_SUMMARY_ENABLED' && !['true','false'].includes(value)) throw new UserError('Choose whether voice summaries are enabled.');
+    if (key === 'VOICE_SUMMARY_CONSENT_MODE' && !['individual','server'].includes(value)) throw new UserError('Choose individual consent or prior server-wide consent.');
+    if (key === 'VOICE_SUMMARY_PROVIDER' && !['local','openai'].includes(value)) throw new UserError('Choose a supported transcription provider.');
+    if (key === 'VOICE_SUMMARY_LOCAL_DEVICE' && !['vulkan','cpu'].includes(value)) throw new UserError('Choose Vulkan or CPU for local transcription.');
+    if (key === 'VOICE_SUMMARY_MODEL' && !value) throw new UserError('Enter a transcription model identifier.');
+    if (key === 'VOICE_SUMMARY_MINUTES' && !['4','5'].includes(value)) throw new UserError('Voice summary window must be 4 or 5 minutes.');
+    if (key === 'VOICE_SUMMARY_MONTHLY_MINUTES' && (!/^[1-9]\d{0,4}$/.test(value) || Number(value) > 10000)) throw new UserError('Monthly transcription allowance must be an integer from 1 to 10000 minutes.');
+    if (key === 'VOICE_SUMMARY_LANGUAGES' && (value.length > 128 || value.split(',').length > 5 || value.split(',').some(code => !/^[a-z]{2,3}(?:-[a-z]{2,4})?$/.test(code.trim())))) throw new UserError('Enter 1 to 5 comma-separated lowercase language codes, up to 128 characters.');
+    if (key === 'VOICE_SUMMARY_GLOSSARY' && (value.length > 1000 || /[<>]/.test(value))) throw new UserError('Voice glossary must be at most 1000 characters without angle brackets.');
+    if (key === 'VOICE_SUMMARY_LANGUAGE' && (!value.trim() || value.length > 80)) throw new UserError('Summary language must contain 1 to 80 characters.');
   }
 }
 
@@ -111,6 +125,7 @@ export class SettingsStore {
   missing(env = this.effective().env) {
     const required = ['DISCORD_BOT_TOKEN','DISCORD_APPLICATION_ID','DISCORD_GUILD_ID','OWNER_DISCORD_ID'];
     if (env.AI_PROVIDER === 'openai') required.push('OPENAI_API_KEY','OPENAI_MODEL');
+    if (env.VOICE_SUMMARY_ENABLED === 'true' && env.VOICE_SUMMARY_PROVIDER === 'openai') required.push('VOICE_SUMMARY_API_KEY');
     return required.filter(key => !env[key]?.trim() || env[key]!.startsWith('replace-with-'));
   }
   update(input: unknown) {

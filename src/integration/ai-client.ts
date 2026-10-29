@@ -11,6 +11,7 @@ import type { ReferencedInput } from '../replies.js';
 import type { ReplyPayload } from '../responses.js';
 import type { ChatIdentity } from '../chat.js';
 import { validToWorker, validFromWorker, workerEnvironment, type AskInput, type ToWorker, type WorkerStatus } from './protocol.js';
+import { validVoiceSummaryInput, VOICE_SUMMARY_TIMEOUT_MS, type VoiceSummaryInput } from '../voice-summary/summary.js';
 
 type Pending = {
   resolve: (result: boolean) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout>;
@@ -19,9 +20,11 @@ type Pending = {
   nickname?: (request:NicknameRequest,signal:AbortSignal)=>Promise<string>;
   nicknameRequest?:NicknameRequest; nicknameResult?:Promise<string>;
 };
+type SummaryPending = { resolve: (result: string) => void; reject: (error: Error) => void; cleanup: () => void };
 export class AIClient extends EventEmitter {
   private child?: ChildProcess;
   private requests = new Map<string,Pending>();
+  private summaries = new Map<string, SummaryPending>();
   private stopped = false;
   private retry?: ReturnType<typeof setTimeout>;
   private failures = 0;
@@ -41,6 +44,8 @@ export class AIClient extends EventEmitter {
       this.child = undefined;
       child.removeAllListeners('message');
       for (const [id,p] of this.requests) { clearTimeout(p.timer); p.controller.abort(); p.reject(new UserError('AI worker restarted. Send a new question; sleep playback continues.')); this.requests.delete(id); }
+      for (const p of this.summaries.values()) { p.cleanup(); p.reject(new UserError('AI worker restarted. Request a new voice summary.')); }
+      this.summaries.clear();
       if (this.stopped) return;
       // A Windows credential failure needs a fresh sign-in, not another worker.
       if (needsSignIn) return;
@@ -59,6 +64,14 @@ export class AIClient extends EventEmitter {
     child.on('message',raw => {
       if (this.child !== child || !validFromWorker(raw)) return;
       if (raw.type === 'status') { if (raw.status.phase === 'ready') this.failures = 0; this.update(raw.status); return; }
+      if (raw.type === 'voice_summary_result') {
+        const pending = this.summaries.get(raw.id);
+        if (!pending) return;
+        pending.cleanup(); this.summaries.delete(raw.id);
+        if (raw.error !== undefined) pending.reject(new UserError(raw.error));
+        else pending.resolve(raw.result);
+        return;
+      }
       const pending = this.requests.get(raw.id); if (!pending) return;
       if (raw.type === 'failed' || raw.type === 'done' || raw.type === 'duplicate') {
         clearTimeout(pending.timer); pending.controller.abort(); this.requests.delete(raw.id);
@@ -95,10 +108,10 @@ export class AIClient extends EventEmitter {
     });
   }
   private update(status: WorkerStatus) { this.status = status; this.emit('status',status); }
-  private send(message: ToWorker) {
+  private send(message: ToWorker, onError?: (error: Error) => void) {
     if (!validToWorker(message)) throw new UserError('Invalid AI request payload.');
     if (!this.child?.connected) throw new UserError('AI connection is unavailable; sleep controls still work.');
-    this.child.send(message,() => {});
+    this.child.send(message,error => { if (error) onError?.(error); });
   }
   private request(message: { type:'ask';input:AskInput } | { type:'reset';identity:ChatIdentity },
     callbacks: Pick<Pending,'deliver'|'reference'|'nickname'|'nicknameRequest'> = {}): Promise<boolean> {
@@ -121,10 +134,41 @@ export class AIClient extends EventEmitter {
     return this.request({type:'ask',input},{deliver,reference,nickname,nicknameRequest:input.nickname});
   }
   reset(identity: ChatIdentity) { return this.request({type:'reset',identity}); }
+  summarizeVoice(input: VoiceSummaryInput, signal: AbortSignal): Promise<string> {
+    if (!validVoiceSummaryInput(input)) return Promise.reject(new UserError('Invalid voice summary input.'));
+    if (signal.aborted) return Promise.reject(new UserError('Voice summary was cancelled.'));
+    if (this.stopped || this.status.phase !== 'ready') return Promise.reject(new UserError('AI is unavailable or starting. Try again shortly.'));
+    if (this.summaries.size >= 1) return Promise.reject(new UserError('A voice summary is already running. Try again shortly.'));
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      const cancel = (message: string) => {
+        const pending = this.summaries.get(id);
+        if (!pending) return;
+        pending.cleanup(); this.summaries.delete(id);
+        try { this.send({ type: 'cancel', id }); } catch {}
+        reject(new UserError(message));
+      };
+      const aborted = () => cancel('Voice summary was cancelled.');
+      const timer = setTimeout(() => cancel('Voice summary timed out.'), VOICE_SUMMARY_TIMEOUT_MS);
+      const cleanup = () => { clearTimeout(timer); signal.removeEventListener('abort', aborted); };
+      this.summaries.set(id, { resolve, reject, cleanup });
+      signal.addEventListener('abort', aborted, { once: true });
+      if (signal.aborted) { aborted(); return; }
+      try { this.send({ type: 'voice_summary', id, input }, () => {
+        const pending = this.summaries.get(id);
+        if (!pending) return;
+        pending.cleanup(); this.summaries.delete(id);
+        reject(new UserError('AI worker could not receive the voice summary. Try again shortly.'));
+      }); }
+      catch (error) { cleanup(); this.summaries.delete(id); reject(error as Error); }
+    });
+  }
   async close(options: { force?: boolean } = {}): Promise<boolean> {
     this.stopped = true; clearTimeout(this.retry);
     for (const p of this.requests.values()) { clearTimeout(p.timer); p.controller.abort(); p.reject(new UserError('Bot is shutting down.')); }
     this.requests.clear();
+    for (const p of this.summaries.values()) { p.cleanup(); p.reject(new UserError('Bot is shutting down.')); }
+    this.summaries.clear();
     const child = this.child;
     if (child?.connected) child.send({type:'shutdown'},() => {});
     if (!child || child.exitCode !== null || child.signalCode !== null) return true;

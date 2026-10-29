@@ -22,10 +22,21 @@ export async function runSmoke({window,request,stateRoot,focus,tray}) {
   await wait('document.getElementById("settings-form").hidden === false && document.getElementById("bot-control").textContent.includes("Complete setup")');
   console.log('Desktop smoke: window and controller ready.');
   assert.equal(await js('typeof window.rainbot.authSwitch'),'function');
+  assert.equal(await js('typeof window.rainbot.voiceSummaryStatus'),'function');
+  assert.equal(await js('typeof window.rainbot.localSpeechSetup'),'function');
+  assert.equal((await request('settings')).values.VOICE_SUMMARY_PROVIDER,'local');
+  assert.equal((await request('localSpeechStatus')).state,'missing');
+  assert.equal((await request('settings')).values.VOICE_SUMMARY_ENABLED,'false');
+  assert.equal(await js('document.getElementById("voice-summary-consent").value'),'individual');
+  assert.equal((await request('voiceSummaryStatus')).state,'off');
+  assert.equal(await js('document.getElementById("settings-form").elements.namedItem("VOICE_SUMMARY_API_KEY").type'),'password');
   assert.equal(await js('document.getElementById("switch-chatgpt").textContent'),'Use a different ChatGPT account');
   assert.equal(await js('typeof require'),'undefined');
   assert.equal(await js('typeof window.rainbot.exec'),'undefined');
   assert.equal(await js('typeof window.rainbot.request'),'undefined');
+  await js('location.hash="overview";navigate();document.getElementById("main").focus();document.dispatchEvent(new KeyboardEvent("keydown",{key:"/",bubbles:true}))');
+  await wait('location.hash === "#commands" && document.activeElement.id === "command-search"');
+  assert.equal(await js('document.getElementById("page-commands").hidden'),false);
   await js('location.hash="settings"');
   await wait('document.getElementById("page-settings").hidden === false');
   console.log('Desktop smoke: settings view ready.');
@@ -35,13 +46,14 @@ export async function runSmoke({window,request,stateRoot,focus,tray}) {
   await painted();
   await writeFile(join(output,'chatgpt-accounts.png'),(await window.webContents.capturePage()).toPNG());
   await js(`(() => {
-    const values={DISCORD_APPLICATION_ID:'123456789012345678',DISCORD_GUILD_ID:'223456789012345678',OWNER_DISCORD_ID:'323456789012345678',AI_PROVIDER:'openai',OPENAI_MODEL:'test-model',OPENAI_API_KEY:'synthetic-desktop-key'};
+    const values={DISCORD_APPLICATION_ID:'123456789012345678',DISCORD_GUILD_ID:'223456789012345678',OWNER_DISCORD_ID:'323456789012345678',AI_PROVIDER:'openai',OPENAI_MODEL:'test-model',OPENAI_API_KEY:'synthetic-desktop-key',VOICE_SUMMARY_CONSENT_MODE:'server'};
     for(const [key,value] of Object.entries(values)){const input=document.getElementById('settings-form').elements.namedItem(key);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}
     document.getElementById('save-settings').click();
   })()`);
   await wait('document.getElementById("settings-feedback").textContent.includes("Settings saved") && document.getElementById("settings-form").inert === false');
   assert.equal(await js('document.getElementById("settings-form").elements.namedItem("OPENAI_API_KEY").value'),'');
   const saved=await request('settings');assert.equal(saved.secrets.OPENAI_API_KEY,true);assert.equal(JSON.stringify(saved).includes('synthetic-desktop-key'),false);
+  assert.equal(saved.values.VOICE_SUMMARY_CONSENT_MODE,'server');
   assert.ok(saved.missing.includes('DISCORD_BOT_TOKEN'));
   const op=await request('start');
   await new Promise(resolve=>setTimeout(resolve,150));
@@ -52,12 +64,17 @@ export async function runSmoke({window,request,stateRoot,focus,tray}) {
   await wait('document.getElementById("settings-form").hidden === false');
   await js('location.hash="settings"');
   await wait('document.getElementById("page-settings").hidden === false');
+  await wait('document.getElementById("voice-summary-consent").value === "server"');
   assert.equal(await js('document.getElementById("settings-form").elements.namedItem("OPENAI_API_KEY").value'),'');
   await wait('document.getElementById("desktop-auth-status").textContent === "ChatGPT not connected" && document.getElementById("bot-control").textContent.includes("Complete setup") && document.getElementById("settings-form").elements.namedItem("DISCORD_APPLICATION_ID").value === "123456789012345678"');
   await js('if(document.documentElement.dataset.theme !== "light")document.getElementById("theme-toggle").click()');
   await wait('document.documentElement.dataset.theme === "light"');
   await painted();
   await writeFile(join(output,'settings.png'),(await window.webContents.capturePage()).toPNG());
+  await js('document.getElementById("voice-summary-heading").closest("section").scrollIntoView({block:"start"})');
+  assert.equal(await js('document.getElementById("local-speech-settings").hidden'),false);
+  await painted();
+  await writeFile(join(output,'voice-settings.png'),(await window.webContents.capturePage()).toPNG());
   await window.setSize(960,700);await new Promise(resolve=>setTimeout(resolve,250));
   assert.equal(await js('document.documentElement.scrollWidth > innerWidth'),false);
   await js('document.getElementById("theme-toggle").click()');

@@ -24,7 +24,13 @@ const require=createRequire(${JSON.stringify(pathToFileURL(join(backend,'package
 const sharp=(await import(pathToFileURL(require.resolve('sharp')).href)).default;
 assert.ok((await sharp({create:{width:8,height:8,channels:3,background:'#2463eb'}}).png().toBuffer()).length > 0);
 const Opus=(await import(pathToFileURL(require.resolve('opusscript')).href)).default;
-const encoder=new Opus(48000,2,Opus.Application.AUDIO);assert.ok(encoder.encode(Buffer.alloc(3840),960).length > 0);encoder.delete();
+const encoder=new Opus(48000,2,Opus.Application.AUDIO);const packet=encoder.encode(Buffer.alloc(3840),960);assert.ok(packet.length > 0);encoder.delete();
+const decode=(await import(${JSON.stringify(pathToFileURL(join(backend,'src/voice-summary/transcription.js')).href)})).chunkWav;
+assert.equal(decode({speakerId:'synthetic',start:0,end:20,frames:[{at:0,packet}]}).length,1964);
+const speech=await import(${JSON.stringify(pathToFileURL(join(backend,'src/voice-summary/speech-client.js')).href)});
+const configuration=(await import(${JSON.stringify(pathToFileURL(join(backend,'src/voice-summary/config.js')).href)})).voiceConfig({VOICE_SUMMARY_PROVIDER:'openai',VOICE_SUMMARY_API_KEY:'synthetic-disabled-test'});
+await assert.rejects(speech.transcribeSnapshot({epoch:'synthetic',start:0,end:20,chunks:[{speakerId:'synthetic',start:0,end:20,frames:[{at:0,packet}]}]},configuration,AbortSignal.timeout(10000),()=>{throw new Error('Synthetic budget denial before any API submission');}),/Synthetic budget denial/);
+console.log('Packaged voice decoder and budget-gated speech worker passed without an API submission.');
 const db=new DatabaseSync(':memory:');assert.equal(db.prepare('SELECT 1 AS value').get().value,1);db.close();
 console.log('Packaged native/image/audio/database dependencies passed.');
 `);

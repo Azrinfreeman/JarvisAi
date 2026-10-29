@@ -113,6 +113,12 @@ export function createDashboardServer(statusPath?: string, options: { settings?:
           else if (++rate.count > 30) throw new HttpError(429,'Too many changes. Wait a minute before trying again.');
         }
         if (path === '/api/settings' && read) { json(200,settings.view()); return; }
+        if (path === '/api/voice-summary/local' && read) { json(200,await service.localSpeechStatus()); return; }
+        if (['/api/voice-summary/local/setup','/api/voice-summary/local/cancel'].includes(path) && req.method === 'POST') {
+          emptyRequest(await jsonBody(req));
+          json(path.endsWith('/setup') ? 202 : 200,await (path.endsWith('/setup') ? service.localSpeechSetup() : service.localSpeechCancel())); return;
+        }
+        if (path === '/api/voice-summary' && read) { json(200,await service.voiceSummaryStatus()); return; }
         if (path === '/api/management' && read) { json(200,await supervisor.status(url.searchParams.get('fresh') === '1')); return; }
         if (path.startsWith('/api/operations/') && read) {
           const operation = supervisor.getOperation(path.slice('/api/operations/'.length));

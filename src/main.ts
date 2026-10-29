@@ -20,6 +20,9 @@ import { Conversations } from './storage.js';
 import { Nicknames } from './nicknames.js';
 import { nicknameIntent } from './nickname-request.js';
 import { startRuntimeControl } from './integration/runtime-control.js';
+import { voiceConfig } from './voice-summary/config.js';
+import { VoiceSummaryService } from './voice-summary/service.js';
+import { VoiceCommands } from './voice-summary/discord.js';
 
 let client: Client | undefined;
 let ai: AIClient | undefined;
@@ -32,13 +35,14 @@ let control: Awaited<ReturnType<typeof startRuntimeControl>> | undefined;
 let shuttingDown: Promise<void> | undefined;
 let stopHealth: (() => void) | undefined;
 let nicknameEvents:Conversations | undefined;
+let voiceSummaries:VoiceSummaryService | undefined;
 function cleanup() {
   if (cleaned) return; cleaned = true; closing = true;
-  stopHealth?.(); void ai?.close({force:false}); sessions?.shutdown(); void client?.destroy(); store?.close(); nicknameEvents?.close(); control?.close(); release?.();
+  stopHealth?.(); voiceSummaries?.close(); void ai?.close({force:false}); sessions?.shutdown(); void client?.destroy(); store?.close(); nicknameEvents?.close(); control?.close(); release?.();
 }
 function shutdown(exitCode = 0): Promise<void> {
   return shuttingDown ??= (async () => {
-    closing = true; stopHealth?.(); sessions?.shutdown(); await client?.destroy();
+    closing = true; stopHealth?.(); voiceSummaries?.close(); sessions?.shutdown(); await client?.destroy();
     if (ai && !await ai.close({force:false})) throw new UserError('AI worker did not exit. Inspect the owned process before recovery.');
     cleanup(); process.exit(exitCode);
   })().catch(error => { shuttingDown = undefined; throw error; });
@@ -61,6 +65,10 @@ try {
   sessions = new SessionManager(bot,store,sleepConfig);
   const sleep = sessions;
   ai = new AIClient(); const worker = ai;
+  const speechConfig=voiceConfig();
+  voiceSummaries=new VoiceSummaryService(root,speechConfig,{transcribe: (await import('./voice-summary/speech-client.js')).transcribeSnapshot,
+    summarize:(input,signal)=>worker.summarizeVoice(input,signal)});
+  const voice=new VoiceCommands(bot,sleep,voiceSummaries,config,sleepConfig.controllerRoleIds);
   stopHealth=healthMonitor(join(root,'data','runtime-status.json'),() => ({
     discordReady:bot.isReady(),ai:worker.status,configRevision:process.env.BOT_CONFIG_REVISION,
     sleep:store!.active().map(session=>({state:session.state,mode:session.mode,rainStyle:session.rain_style,
@@ -80,12 +88,13 @@ try {
     console.log('Combined bot connected. Sleep restoration is independent of AI.');
     await sleep.restore();
   });
-  bot.on(Events.VoiceStateUpdate,(oldState,newState) => sleep.onVoiceStateUpdate(oldState,newState));
+  bot.on(Events.VoiceStateUpdate,(oldState,newState) => {voice.voiceState(oldState,newState);sleep.onVoiceStateUpdate(oldState,newState);});
   bot.on(Events.Error,() => console.error('Discord connection error. Check configuration and connectivity.'));
   async function respond(interaction: ChatInputCommandInteraction) {
     if (closing) return;
     const owner = commandOwner(interaction.commandName);
     if (!owner || !gate.claim(`interaction:${interaction.id}`)) return;
+    if (owner === 'voice-summary') { await voice.interaction(interaction); return; }
     if (owner === 'sleep') { await handleSleep(interaction,sleep,sleepConfig.controllerRoleIds); return; }
     const roles = interaction.member && 'roles' in interaction.member
       ? Array.isArray(interaction.member.roles) ? interaction.member.roles : [...interaction.member.roles.cache.keys()] : [];
@@ -106,7 +115,7 @@ try {
       await interaction.editReply({content:result,allowedMentions:{parse:[]}}); return;
     }
     if (interaction.commandName === 'help') {
-      await interaction.reply({flags:MessageFlags.Ephemeral,content:'Use /ask or mention me for AI questions. Add one image or reply to a message and tag me for context. /ask private:true keeps the question and answer visible only to you. /reset clears your AI history in this channel. Jarvis checks supplied context before searching for missing public facts. /nickname member:... name:... changes a server nickname: only the configured owner or Manage Nicknames members can use it, subject to role hierarchy. Or ask me directly: rename @member to "Exact nickname". /sleep join joins your voice channel; rain/sunny commands change ambience; /sleep leave leaves; /sleep status shows the saved session. Only authorized sleep controllers can change voice. AI replies are text and do not interrupt ambience. No microphone recording or AI speech is enabled. Everyone shares the connected owner’s AI allowance.'}); return;
+      await interaction.reply({flags:MessageFlags.Ephemeral,content:'Use /ask or mention me for AI questions. Add an image or reply to a message for context. /ask private:true is visible only to you; /reset clears your AI chat history in this channel. /nickname changes a server nickname for the owner or Manage Nicknames members, subject to hierarchy. /sleep join, rain/sunny, leave and status control ambience for authorized controllers. Voice summaries are disabled by default: /voice-summary start announces listening and everyone must /voice-summary consent. Tag me with "ringkaskan perbualan voice 5 minit tadi" in the voice channel text chat, or use summarize/transcript/test. Only captured speech is available; /voice-summary withdraw stops capture and clears pending audio. Local transcription needs no speech API key; optional cloud transcription uses its own API key and allowance. Summaries use the connected text provider. No AI speech is generated.'}); return;
     }
     if (interaction.commandName === 'status') {
       await interaction.reply({flags:MessageFlags.Ephemeral,content:`AI: ${worker.status.phase}\n${worker.status.label}\nAccess: ${config.accessMode}. ${config.provider === 'openai' ? 'Usage is billed to the configured API project.' : 'Web search: context first. Allowance is managed in ChatGPT settings.'}\nUse /sleep status for voice/audio state.`}); return;
@@ -167,6 +176,7 @@ try {
       delivered = true;
     };
     void (async () => {
+      if(await voice.mention(message,prompt))return;
       if (message.attachments.size > 1) throw new UserError('Attach one image per question.');
       const attachment = message.attachments.first(); const image = attachment ? validateImage(attachment) : undefined;
       if (image && !message.channel.permissionsFor(bot.user!)?.has(PermissionFlagsBits.AttachFiles)) throw new UserError('I need Attach Files to show the image with your question.');

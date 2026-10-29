@@ -35,7 +35,7 @@ await copyFile(join(root,'package.json'),join(backend,'package.json'));
 await copyFile(join(root,'package-lock.json'),join(backend,'package-lock.json'));
 run(npmCLI,['ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],backend);
 await mkdir(join(backend,'scripts'),{recursive:true});
-for(const file of ['inspect-runtime.ps1','process-directory.ps1'])await copyFile(join(root,'scripts',file),join(backend,'scripts',file));
+for(const file of ['inspect-runtime.ps1','process-directory.ps1','local-speech-extract.ps1','local-speech-host.ps1','local-speech-licenses.txt'])await copyFile(join(root,'scripts',file),join(backend,'scripts',file));
 const audio=['rain-loop.pcm','rain-soft-loop.pcm','rain-indoor-loop.pcm','rain-glass-loop.pcm','rain-heavy-loop.pcm','sunny-birds-loop.pcm','thunder-distant-a.pcm','thunder-distant-b.pcm','thunder-distant-c.pcm','thunder-distant-d.pcm'];
 await mkdir(join(backend,'assets'),{recursive:true});
 for(const file of audio)await copyFile(join(root,'assets',file),join(backend,'assets',file));

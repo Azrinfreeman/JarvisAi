@@ -55,6 +55,11 @@ const commands = [
   { name: 'Check AI connection', description: 'See the assistant’s current connection status.', command: '/status', group: 'assistant', icon: 'pulse' },
   { name: 'Clear conversation', description: 'Clear your AI context in the current channel.', command: '/reset', group: 'assistant', icon: 'refresh' },
   { name: 'Change a nickname', description: 'Update a server nickname with the required Discord permissions.', command: '/nickname', group: 'assistant', icon: 'discord' },
+  { name: 'Start voice listening', description: 'Controller: announce listening using the consent mode chosen in Settings.', command: '/voice-summary start', group: 'assistant', icon: 'headphones' },
+  { name: 'Consent to listening', description: 'Opt in to the current announced session in your voice channel.', command: '/voice-summary consent', group: 'assistant', icon: 'shield' },
+  { name: 'Summarize recent voice', description: 'Summarize five minutes already captured into the voice channel’s own text chat.', command: '/voice-summary summarize minutes:5', group: 'assistant', icon: 'chat' },
+  { name: 'Review voice recognition', description: 'Check 30 seconds of recent captured speech with the selected local or cloud engine.', command: '/voice-summary test seconds:30', group: 'assistant', icon: 'terminal' },
+  { name: 'Withdraw listening consent', description: 'Stop voice capture for everyone and discard pending audio/results. Ambience continues.', command: '/voice-summary withdraw', group: 'assistant', icon: 'stop' },
   { name: 'Join with rain', description: 'Join your voice channel and begin a rain session.', command: '/sleep join mode:rain', group: 'ambience', icon: 'headphones' },
   { name: 'Join with birdsong', description: 'Join your voice channel with morning birds and outdoor ambience.', command: '/sleep join mode:sunny', group: 'ambience', icon: 'sun' },
   { name: 'Join silently', description: 'Stay in your voice channel without playing audio.', command: '/sleep join mode:silent', group: 'ambience', icon: 'quiet' },
@@ -65,15 +70,14 @@ const commands = [
   { name: 'Leave voice', description: 'Disconnect from voice and disable automatic restoration for this session.', command: '/sleep leave', group: 'ambience', icon: 'headphones' },
 ];
 function escapeHTML(value) { return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
-const art = scene => `<div class="scene-art ${scene.art}" aria-hidden="true">${icon(scene.icon)}</div>`;
-$('overview-scenes').innerHTML = scenes.slice(0, 3).map(scene => `<button class="mini-scene" data-copy="${scene.command}" aria-label="Copy command for ${scene.name}">${art(scene)}<strong>${scene.name}</strong><small>${scene.sub}</small></button>`).join('');
-$('scene-grid').innerHTML = scenes.map(scene => `<article class="scene-card">${art(scene)}<div class="scene-body"><h3>${scene.name}</h3><p>${scene.description}</p><button class="button" data-copy="${scene.command}" aria-label="Copy command for ${scene.name}">${icon('copy')}Copy command</button></div></article>`).join('');
+$('overview-scenes').innerHTML = scenes.slice(0, 3).map(scene => `<button class="action-row" data-copy="${scene.command}" aria-label="Copy command for ${scene.name}"><span><strong>${scene.name}</strong></span>${icon('copy')}</button>`).join('');
+$('scene-grid').innerHTML = scenes.map(scene => `<li class="scene-row"><div><h3>${scene.name}</h3><p>${scene.description}</p></div><button class="button secondary" data-copy="${scene.command}" aria-label="Copy command for ${scene.name}">${icon('copy')}Copy command</button></li>`).join('');
 const pageInfo = {
-  overview: ['Overview', 'A clear view of your companion. A calmer space for your community.'],
-  ambience: ['Ambience', 'Set the tone for your community, one soundscape at a time.'],
-  commands: ['Commands', 'Everything your companion can do, ready for Discord.'],
-  system: ['System health', 'Live operational status from your local companion.'],
-  settings: ['Settings', 'Your bot, your server, your connection.'],
+  overview: 'Overview',
+  ambience: 'Ambience',
+  commands: 'Commands',
+  system: 'System health',
+  settings: 'Settings',
 };
 function navigate() {
   const requested = location.hash.slice(1) || 'overview';
@@ -84,10 +88,8 @@ function navigate() {
     el.classList.toggle('selected', selected);
     if (selected) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
   });
-  $('page-title').textContent = pageInfo[page][0];
-  $('breadcrumb').textContent = pageInfo[page][0];
-  $('page-description').textContent = pageInfo[page][1];
-  document.title = `RainBot · ${pageInfo[page][0]}`;
+  $('page-title').textContent = pageInfo[page];
+  document.title = window.rainbot ? 'RainBot' : `RainBot — ${pageInfo[page]}`;
   window.scrollTo(0, 0);
 }
 window.addEventListener('hashchange', navigate);
@@ -109,7 +111,7 @@ let filter = 'all';
 function renderCommands() {
   const query = $('command-search').value.trim().toLowerCase();
   const matches = commands.filter(command => (filter === 'all' || command.group === filter) && `${command.name} ${command.description} ${command.command}`.toLowerCase().includes(query));
-  $('commands-list').innerHTML = matches.length ? matches.map(command => `<article class="command-row"><span class="tile-icon ${command.group === 'assistant' ? 'blue' : 'mint'}">${icon(command.icon)}</span><div><h3>${command.name}</h3><p>${command.description}</p><code>${command.command}</code></div><button class="icon-button" data-copy="${command.command}" aria-label="Copy ${command.name.toLowerCase()} command" title="Copy command">${icon('copy')}</button></article>`).join('') : `<div class="empty-state">${icon('search')}<strong>No matching commands</strong><p>Try another search or select a different category.</p></div>`;
+  $('commands-list').innerHTML = matches.length ? matches.map(command => `<li class="command-row"><div><code>${command.command}</code><h3>${command.name}</h3><p>${command.description}</p></div><button class="icon-button" data-copy="${command.command}" aria-label="Copy ${command.name.toLowerCase()} command" title="Copy command">${icon('copy')}</button></li>`).join('') : `<li class="empty-state"><strong>No matching commands</strong><p>Try another search or select a different category.</p></li>`;
 }
 $('command-search').addEventListener('input', renderCommands);
 document.querySelectorAll('[data-filter]').forEach(button => button.addEventListener('click', () => {
@@ -119,8 +121,8 @@ document.querySelectorAll('[data-filter]').forEach(button => button.addEventList
 }));
 renderCommands();
 document.addEventListener('keydown', event => {
-  if (event.key === '/' && !event.ctrlKey && !event.metaKey && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) && !$('copy-dialog').open) {
-    event.preventDefault(); location.hash = 'commands'; $('command-search').focus();
+  if (event.key === '/' && !event.ctrlKey && !event.metaKey && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !document.activeElement.isContentEditable && !document.querySelector('dialog[open]')) {
+    event.preventDefault(); location.hash = 'commands'; navigate(); $('command-search').focus();
   }
 });
 function applyTheme(theme) {
@@ -136,7 +138,6 @@ $('theme-toggle').addEventListener('click', () => {
   applyTheme(theme);
   try { localStorage.setItem('rainbot-theme', theme); } catch { /* Theme still applies for this visit. */ }
 });
-$('today').textContent = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date());
 const phaseLabels = { ready: 'Available', starting: 'Starting', unavailable: 'Unavailable', restarting: 'Reconnecting', offline: 'Offline' };
 function badge(id, text, tone = '') { $(id).textContent = text; $(id).className = `badge ${tone}`; }
 function metric(id, value, unit) { $(id).innerHTML = value === null || value === undefined ? '—' : `${escapeHTML(value)}<span class="unit">${unit}</span>`; }
@@ -145,13 +146,11 @@ function renderStatus(status) {
   const count = status.sessions.length;
   const playing = status.sessions.filter(session => session.audio === 'playing').length;
   $('discord-value').textContent = status.discordReady ? 'Connected' : 'Offline';
-  $('discord-detail').textContent = status.discordReady ? 'Your companion is connected to Discord' : 'No current Discord connection';
-  badge('discord-badge', status.discordReady ? 'Online' : 'Offline', status.discordReady ? 'good' : '');
+  $('discord-value').dataset.tone = status.discordReady ? 'good' : '';
   $('ai-value').textContent = phaseLabels[status.aiPhase] || 'Unavailable';
-  badge('ai-badge', status.aiPhase === 'ready' ? 'Ready' : phaseLabels[status.aiPhase] || 'Unavailable', status.aiPhase === 'ready' ? 'good' : live ? 'warning' : '');
-  $('session-value').textContent = live ? String(count).padStart(2, '0') : '—';
-  badge('session-badge', playing ? 'Playing' : live ? 'Standby' : 'Offline', playing ? 'good' : '');
-  $('session-detail').textContent = playing ? `${playing} ${playing === 1 ? 'session' : 'sessions'} playing ambience` : live ? 'Ready when your community is' : 'Available when the companion is running';
+  $('ai-value').dataset.tone = status.aiPhase === 'ready' ? 'good' : live ? 'warning' : '';
+  $('session-value').textContent = live ? `${count} ${count === 1 ? 'session' : 'sessions'}` : 'Unavailable';
+  $('session-detail').textContent = playing ? `${playing} playing ambience` : live ? 'No audio playing' : 'Live status unavailable';
   $('last-updated').textContent = live ? `Updated ${new Date(status.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : status.state === 'unavailable' ? 'No runtime snapshot available' : 'Runtime snapshot is no longer current';
   $('footer-status').innerHTML = `<span class="local-dot"></span>${live ? 'Live local status' : 'Companion offline'}`;
   metric('cpu-value', status.metrics?.cpuPercent, '%');
@@ -167,8 +166,8 @@ function renderStatus(status) {
   $('system-time').textContent = status.updatedAt ? new Date(status.updatedAt).toLocaleString() : 'Not available';
   $('sessions').innerHTML = count ? status.sessions.map((session, index) => {
     const name = session.mode === 'rain' ? scenes.find(scene => scene.id === session.rainStyle)?.name || 'Rain' : session.mode === 'sunny' ? 'Morning birdsong' : 'Quiet presence';
-    return `<div class="session-row"><span class="tile-icon mint">${icon('headphones')}</span><div>Session ${index + 1} · ${escapeHTML(name)}<small>Voice: ${escapeHTML(session.voice)} · Audio: ${escapeHTML(session.audio)}</small></div><span class="badge ${session.audio === 'playing' ? 'good' : ''}">${session.audio === 'playing' ? 'Playing' : 'Standby'}</span></div>`;
-  }).join('') : `<div class="empty-state">${icon('headphones')}<strong>${live ? 'A quiet moment' : 'No live sessions to display'}</strong><p>${live ? 'Join a voice channel in Discord and use /sleep join to start a session.' : 'Voice sessions appear here when the companion is running.'}</p></div>`;
+    return `<div class="session-row"><div><strong>Session ${index + 1}: ${escapeHTML(name)}</strong><small>Voice: ${escapeHTML(session.voice)}; audio: ${escapeHTML(session.audio)}</small></div><span class="badge ${session.audio === 'playing' ? 'good' : ''}">${session.audio === 'playing' ? 'Playing' : 'Standby'}</span></div>`;
+  }).join('') : `<div class="empty-state">${icon('headphones')}<strong>${live ? 'No active voice sessions' : 'No live sessions to display'}</strong><p>${live ? 'Join a voice channel in Discord and use /sleep join to start a session.' : 'Voice sessions appear here when the companion is running.'}</p></div>`;
 }
 let refreshing = false;
 async function refreshStatus(manual = false) {
@@ -208,10 +207,14 @@ let setupBusy = false;
 let chatgptConnected = false;
 const removedSecrets = new Set();
 const form = $('settings-form');
+const secretFields = ['DISCORD_BOT_TOKEN','OPENAI_API_KEY','VOICE_SUMMARY_API_KEY'];
 const fieldLabels = { DISCORD_BOT_TOKEN:'Bot token',DISCORD_APPLICATION_ID:'Application ID',DISCORD_GUILD_ID:'Server ID',
   OWNER_DISCORD_ID:'Owner ID',ACCESS_MODE:'Access mode',ALLOWED_CHANNEL_IDS:'Allowed channel IDs',ALLOWED_ROLE_IDS:'Allowed role IDs',
   CONTROLLER_ROLE_IDS:'Sleep controller role IDs',RAIN_VOLUME:'Volume',AI_PROVIDER:'Provider',CHATGPT_MODEL:'ChatGPT model',
-  CHATGPT_REASONING_EFFORT:'ChatGPT reasoning',OPENAI_MODEL:'API model',OPENAI_REASONING_EFFORT:'API reasoning',OPENAI_WEB_SEARCH:'Web search',OPENAI_API_KEY:'API key' };
+  CHATGPT_REASONING_EFFORT:'ChatGPT reasoning',OPENAI_MODEL:'API model',OPENAI_REASONING_EFFORT:'API reasoning',OPENAI_WEB_SEARCH:'Web search',OPENAI_API_KEY:'API key',
+  VOICE_SUMMARY_ENABLED:'Voice summaries',VOICE_SUMMARY_CONSENT_MODE:'Voice consent',VOICE_SUMMARY_PROVIDER:'Transcription provider',VOICE_SUMMARY_LOCAL_DEVICE:'Local device',VOICE_SUMMARY_API_KEY:'Speech API key',VOICE_SUMMARY_MODEL:'Transcription model',
+  VOICE_SUMMARY_LANGUAGES:'Expected languages',VOICE_SUMMARY_GLOSSARY:'Voice glossary',VOICE_SUMMARY_MINUTES:'Summary window',
+  VOICE_SUMMARY_MONTHLY_MINUTES:'Monthly transcription allowance',VOICE_SUMMARY_LANGUAGE:'Summary language' };
 function friendly(message) { return String(message).replace(/[A-Z][A-Z_]+/g, key => fieldLabels[key] || key); }
 async function adminRequest(path, method = 'GET', body) {
   const response = await window.rainbotRequest(path, { method, cache:'no-store', signal:AbortSignal.timeout(path.endsWith('ai-response') ? 55000 : 40000),
@@ -231,8 +234,11 @@ function setAuthorized(token) {
   if (!token) {
     settingsData = undefined; management = undefined;
     form.reset(); removedSecrets.clear(); settingsDirty = false;
+    renderVoiceSummary();
+    localSpeechStatus=undefined; renderLocalSpeech();
     $('management-notice').hidden = true;
     $('bot-control').disabled = false;
+    $('bot-control').classList.remove('stop-button');
     $('bot-control').innerHTML = `${icon('lock')}<span>Connect workspace</span>`;
   }
 }
@@ -253,7 +259,21 @@ $('connect-form').addEventListener('submit', async event => {
 function displayProvider() {
   const api = $('ai-provider').value === 'openai';
   $('openai-settings').hidden = !api; $('chatgpt-settings').hidden = api;
+  displayVoiceProvider();
   $('volume-output').textContent = `${Math.round(Number($('volume').value)*100)}%`;
+}
+function displayVoiceProvider() {
+  const cloud=$('voice-summary-provider').value === 'openai';
+  document.querySelectorAll('[data-voice-cloud]').forEach(element=>{element.hidden=!cloud;});
+  $('local-speech-settings').hidden=cloud;
+  $('voice-summary-model').required=cloud;
+  $('voice-summary-monthly').required=cloud;
+  $('voice-summary-privacy').textContent=cloud
+    ? 'Selected audio goes to OpenAI. Transcripts go to your selected summary provider. A separate speech API key is required.'
+    : 'Audio stays on this device. Transcripts go to your selected summary provider. No speech API key needed.';
+  $('voice-summary-test-help').textContent=cloud
+    ? 'Run after 30 seconds of listening. Sends audio to OpenAI and may use API credit.'
+    : 'Run in voice-channel text chat after 30 seconds of listening.';
 }
 function changes() {
   const values = {}; const secrets = {};
@@ -262,7 +282,7 @@ function changes() {
     const input = form.elements.namedItem(key);
     if (input && !input.disabled && input.value !== original) values[key] = input.value.trim();
   }
-  for (const key of ['DISCORD_BOT_TOKEN','OPENAI_API_KEY']) {
+  for (const key of secretFields) {
     const input = form.elements.namedItem(key);
     if (input.disabled) continue;
     if (removedSecrets.has(key)) secrets[key] = {action:'remove'};
@@ -283,6 +303,7 @@ function markDirty() {
     button.textContent = removedSecrets.has(key) ? 'Keep' : 'Remove';
     button.disabled = !settingsData || settingsData.overridden.includes(key) || !settingsData.secrets[key] && !form.elements.namedItem(key).value && !removedSecrets.has(key);
   });
+  renderLocalSpeech();
   updateDesktopActions();
 }
 function renderSettings(data) {
@@ -296,7 +317,7 @@ function renderSettings(data) {
     input.value=value; input.disabled=data.overridden.includes(key);
     input.title=input.disabled ? 'Managed by the deployment environment' : '';
   }
-  for (const [key,id] of [['DISCORD_BOT_TOKEN','token-presence'],['OPENAI_API_KEY','api-presence']]) {
+  for (const [key,id] of [['DISCORD_BOT_TOKEN','token-presence'],['OPENAI_API_KEY','api-presence'],['VOICE_SUMMARY_API_KEY','voice-api-presence']]) {
     const input=form.elements.namedItem(key); input.value=''; input.disabled=data.overridden.includes(key);
     input.title=input.disabled ? 'Managed by the deployment environment' : '';
     $(id).textContent=data.secrets[key] ? data.overridden.includes(key) ? 'Configured externally' : 'Configured' : 'Not configured';
@@ -306,14 +327,80 @@ function renderSettings(data) {
 }
 async function loadSettings() {
   if (!csrf) return;
-  try { renderSettings(await adminRequest('/api/settings')); }
+  try { renderSettings(await adminRequest('/api/settings')); void refreshVoiceSummary(); void refreshLocalSpeech(); }
   catch(error) { settingsFeedback(error.message,true); }
 }
 function settingsFeedback(message, error = false) {
   $('settings-feedback').textContent=message; $('settings-feedback').classList.toggle('error',error); $('settings-feedback').hidden=false;
 }
+function renderVoiceSummary(status = {}) {
+  const labels = {off:'Off',waiting:'Waiting for opt-in',listening:'Listening',paused:'Paused',processing:'Processing'};
+  badge('voice-summary-state',labels[status.state] || 'Off',status.state === 'listening' ? 'good' : ['waiting','paused','processing'].includes(status.state) ? 'warning' : '');
+  $('voice-summary-coverage').textContent=`${Math.floor(status.coverageSeconds || 0)} seconds`;
+  $('voice-summary-participants').textContent=String(status.participants || 0);
+  $('voice-summary-channel').textContent=status.channelId || 'None';
+  $('voice-summary-active-model').textContent=status.model || 'Not available';
+  $('voice-summary-usage').textContent=`${((status.usageSeconds || 0)/60).toFixed(1)} minutes`;
+  $('voice-summary-message').textContent=status.message || 'Voice listening is off.';
+}
+let voiceSummaryRefreshing = false;
+async function refreshVoiceSummary() {
+  if (!csrf || voiceSummaryRefreshing) return;
+  voiceSummaryRefreshing=true;
+  try {
+    const status=await adminRequest('/api/voice-summary');
+    if (csrf) renderVoiceSummary(status);
+  } catch { renderVoiceSummary({message:'Live voice status is unavailable.'}); }
+  finally { voiceSummaryRefreshing=false; }
+}
+let localSpeechStatus;
+let localSpeechRefreshing=false;
+let localSpeechRequest=false;
+let localSpeechEpoch=0;
+function renderLocalSpeech() {
+  const status=localSpeechStatus;
+  const downloading=status?.state === 'downloading';
+  $('local-speech-setup').disabled=!csrf || localSpeechRequest || downloading || status?.state === 'ready';
+  $('local-speech-cancel').hidden=!downloading;
+  $('local-speech-cancel').disabled=localSpeechRequest;
+  $('local-speech-progress').hidden=!downloading;
+  const progress=Number.isFinite(status?.progress) ? Math.max(0,Math.min(100,status.progress)) : 0;
+  $('local-speech-progress').value=progress;
+  $('local-speech-status').textContent=status
+    ? [status.message, downloading ? `${Math.round(progress)}%` : '', status.state === 'ready' ? status.model : ''].filter(Boolean).join(' - ')
+    : 'Checking local transcription...';
+}
+async function refreshLocalSpeech() {
+  if (!csrf || localSpeechRefreshing || localSpeechRequest) return;
+  const session=csrf, epoch=localSpeechEpoch;
+  localSpeechRefreshing=true;
+  try {
+    const status=await adminRequest('/api/voice-summary/local');
+    if (csrf === session && epoch === localSpeechEpoch) { localSpeechStatus=status; renderLocalSpeech(); }
+  } catch(error) {
+    if (csrf === session && epoch === localSpeechEpoch) $('local-speech-status').textContent=error.message;
+  } finally { localSpeechRefreshing=false; }
+}
+async function localSpeechAction(action) {
+  if (!csrf || localSpeechRequest) return;
+  const session=csrf;
+  localSpeechEpoch++;
+  localSpeechRequest=true; renderLocalSpeech();
+  try {
+    const status=await adminRequest(`/api/voice-summary/local/${action}`,'POST',{});
+    if (csrf === session) { localSpeechStatus=status; renderLocalSpeech(); }
+  } catch(error) {
+    if (csrf === session) $('local-speech-status').textContent=error.message;
+  } finally {
+    localSpeechRequest=false;
+    $('local-speech-setup').disabled=!csrf || localSpeechStatus?.state === 'downloading' || localSpeechStatus?.state === 'ready';
+    $('local-speech-cancel').disabled=false;
+  }
+}
+$('local-speech-setup').addEventListener('click',()=>void localSpeechAction('setup'));
+$('local-speech-cancel').addEventListener('click',()=>void localSpeechAction('cancel'));
 form.addEventListener('input', event => {
-  if (['DISCORD_BOT_TOKEN','OPENAI_API_KEY'].includes(event.target.name) && event.target.value) removedSecrets.delete(event.target.name);
+  if (secretFields.includes(event.target.name) && event.target.value) removedSecrets.delete(event.target.name);
   markDirty();
 });
 form.addEventListener('change',markDirty);
@@ -334,7 +421,7 @@ form.addEventListener('submit', async event => {
   } catch(error) { settingsFeedback(error.message,true); }
   finally {
     // Do not retain new credentials even if validation or the connection fails.
-    form.elements.namedItem('DISCORD_BOT_TOKEN').value=''; form.elements.namedItem('OPENAI_API_KEY').value='';
+    for (const key of secretFields) form.elements.namedItem(key).value='';
     savingSettings=false; form.inert=false; markDirty();
   }
 });
@@ -360,8 +447,8 @@ function renderManagement(value) {
   control.innerHTML=`${icon(value.state === 'running' ? 'stop' : value.state === 'stopped' ? 'play' : 'info')}<span>${label}</span>`;
   control.classList.toggle('stop-button',value.state === 'running');
   $('management-notice').hidden=false;
-  $('management-message').textContent=value.restartRequired ? 'Saved · Restart required. Stop and start the bot to apply your changes.' : value.state === 'running' ? 'Stopping the bot disconnects voice and interrupts active AI requests.' : value.message;
-  $('restart-note').textContent=value.restartRequired ? 'Saved · Restart required' : 'Settings are saved locally on this device.';
+  $('management-message').textContent=value.restartRequired ? 'Restart required. Stop and start the bot to apply saved changes.' : value.state === 'running' ? 'Stopping the bot disconnects voice and interrupts active AI requests.' : value.message;
+  $('restart-note').textContent=value.restartRequired ? 'Saved. Restart required' : 'Settings are saved locally on this device.';
   updateDesktopActions();
 }
 async function refreshManagement(fresh = false) {
@@ -416,9 +503,12 @@ window.addEventListener('beforeunload',event => { if (settingsDirty) { event.pre
 window.addEventListener('hashchange',() => {
   if (location.hash !== '#settings') {
     let cleared=false;
-    for (const key of ['DISCORD_BOT_TOKEN','OPENAI_API_KEY']) { const input=form.elements.namedItem(key); if (input.value) {input.value='';cleared=true;} }
+    for (const key of secretFields) { const input=form.elements.namedItem(key); if (input.value) {input.value='';cleared=true;} }
     if (cleared) { markDirty(); toast('Unsaved credentials cleared. Other edits are preserved.'); }
   }
+});
+window.addEventListener('pagehide',() => {
+  for (const key of secretFields) form.elements.namedItem(key).value='';
 });
 async function initializeOwner() {
   try {
@@ -432,7 +522,8 @@ async function initializeOwner() {
   } catch(error) { setAuthorized(''); toast(error.message); }
 }
 void initializeOwner();
-setInterval(() => { if (!document.hidden && csrf) void refreshManagement(); },10000);
+setInterval(() => { if (!document.hidden && csrf) { void refreshManagement(); void refreshVoiceSummary(); void refreshLocalSpeech(); } },10000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && csrf) { void refreshVoiceSummary(); void refreshLocalSpeech(); } });
 
 function updateDesktopActions() {
   if(!window.rainbot)return;
@@ -472,7 +563,8 @@ if(window.rainbot) {
   $('disconnect-chatgpt').addEventListener('click',()=>void desktopAction(()=>window.rainbot.authDisconnect()));
   $('cancel-chatgpt').addEventListener('click',()=>void window.rainbot.authCancel().catch(error=>toast(error.message)));
   const review=document.createElement('dialog');review.className='connect-dialog';
-  review.innerHTML='<h2>Import installation</h2><p class="import-summary"></p><div class="settings-actions"><button type="button" class="button secondary" data-import-cancel>Cancel</button><button type="button" class="button primary" data-import-confirm>Import</button></div>';
+  review.setAttribute('aria-labelledby','import-title');
+  review.innerHTML='<h2 id="import-title">Import installation</h2><p class="import-summary"></p><div class="settings-actions"><button type="button" class="button secondary" data-import-cancel>Cancel</button><button type="button" class="button primary" data-import-confirm>Import</button></div>';
   document.body.append(review);
   let ticket;
   review.querySelector('[data-import-cancel]').addEventListener('click',()=>{ticket=undefined;review.close();});
@@ -489,3 +581,18 @@ if(window.rainbot) {
   }));
   void refreshDesktopAuth();
 }
+
+document.addEventListener('pointerdown', event => {
+  const button = event.target.closest('button');
+  if (!button || button.disabled) return;
+  button.dataset.pointerPressed = 'true';
+  const release = () => {
+    delete button.dataset.pointerPressed;
+    window.removeEventListener('pointerup', release);
+    window.removeEventListener('pointercancel', release);
+    window.removeEventListener('blur', release);
+  };
+  window.addEventListener('pointerup', release, { once: true });
+  window.addEventListener('pointercancel', release, { once: true });
+  window.addEventListener('blur', release, { once: true });
+});

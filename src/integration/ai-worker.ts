@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { ChatService } from '../chat.js';
 import { Conversations } from '../storage.js';
-import { ChatGPTProvider, StubProvider, listModels } from '../provider.js';
+import { ChatGPTProvider, StubProvider, listModels, type Provider } from '../provider.js';
 import { reasoningEffort } from '../config.js';
 import { dataDir, runtimeLock } from '../vault.js';
 import { UserError, CredentialReadError, safeError } from '../errors.js';
@@ -11,11 +11,14 @@ import type { ReferencedInput } from '../replies.js';
 import { validToWorker, type FromWorker, type WorkerStatus } from './protocol.js';
 import { nicknameIntent } from '../nickname-request.js';
 import { OpenAIProvider, apiModels } from '../openai-provider.js';
+import { summarizeVoice, VOICE_SUMMARY_TIMEOUT_MS } from '../voice-summary/summary.js';
 
 if (!process.send) throw new Error('AI worker requires local IPC.');
 const send = (message: FromWorker) => { if (process.connected) process.send!(message, () => {}); };
 const state = (phase: WorkerStatus['phase'], label: string) => send({ type:'status', status:{phase,label} });
 let chat: ChatService | undefined;
+let provider: Provider | undefined;
+let summaryRunning = false;
 let store: Conversations | undefined;
 let release: (() => void) | undefined;
 const controllers = new Map<string, AbortController>();
@@ -58,6 +61,38 @@ process.on('message', raw => {
     else pending.resolve();
     return;
   }
+  if (message.type === 'voice_summary') {
+    if (controllers.has(id)) return;
+    if (!provider || summaryRunning) {
+      send({ type: 'voice_summary_result', id, error: provider ? 'A voice summary is already running. Try again shortly.' : 'AI is unavailable. Try again shortly.' });
+      return;
+    }
+    const controller = new AbortController(); controllers.set(id, controller);
+    summaryRunning = true;
+    const deadline = setTimeout(() => controller.abort(), VOICE_SUMMARY_TIMEOUT_MS);
+    let generation: Promise<string> | undefined;
+    let operationFinished = false;
+    const releaseSlot = () => { if (operationFinished) summaryRunning = false; };
+    const underlying = provider;
+    const bounded: Provider = { generate: (messages, signal, options) => {
+      generation = Promise.resolve().then(() => {
+        signal.throwIfAborted();
+        return underlying.generate(messages, signal, options);
+      });
+      void generation.then(releaseSlot, releaseSlot);
+      return generation;
+    } };
+    void summarizeVoice(bounded, message.input, controller.signal).then(result => {
+      if (!controller.signal.aborted) send({ type: 'voice_summary_result', id, result });
+    }).catch(error => send({ type: 'voice_summary_result', id, error: safeError(error) }))
+      .finally(() => {
+        clearTimeout(deadline); controllers.delete(id);
+        operationFinished = true;
+        if (!generation) summaryRunning = false;
+        else void generation.then(releaseSlot, releaseSlot);
+      });
+    return;
+  }
   if (!chat || !store) { send({type:'failed',id,error:'AI is unavailable; sleep controls still work.'}); return; }
   if (controllers.has(id)) return;
   if (message.type === 'reset') {
@@ -98,7 +133,7 @@ try {
   release = runtimeLock();
   store = new Conversations(join(dataDir,'conversations.sqlite'));
   const stub = process.env.AI_PROVIDER === 'stub';
-  if (stub) { chat = new ChatService(new StubProvider(),store); state('ready','Offline stub (no AI request)'); }
+  if (stub) { provider = new StubProvider(); chat = new ChatService(provider,store); state('ready','Offline stub (no AI request)'); }
   else {
     const instructions = () => `${botInstructions()}\n\nYour AI persona is Jarvis. This combined Discord application may be displayed as RainBot; Jarvis and RainBot both refer to you. This Discord bot also provides deterministic /sleep commands. You cannot join, leave, change ambience or control voice. For requested sleep actions, direct the member to the appropriate /sleep command; never claim an action was executed.`;
     if (process.env.AI_PROVIDER === 'openai') {
@@ -107,14 +142,16 @@ try {
       const models = await apiModels(key);
       if (!models.includes(model)) throw new UserError('The configured API model is not available to this key. Check Settings.');
       const effort = reasoningEffort({ CHATGPT_REASONING_EFFORT: process.env.OPENAI_REASONING_EFFORT });
-      chat = new ChatService(new OpenAIProvider(model,key,effort,process.env.OPENAI_WEB_SEARCH === 'true',fetch,instructions),store);
+      provider = new OpenAIProvider(model,key,effort,process.env.OPENAI_WEB_SEARCH === 'true',fetch,instructions);
+      chat = new ChatService(provider,store);
       state('ready',`OpenAI API / ${model}`);
     } else {
       const models = await listModels();
       const model = process.env.CHATGPT_MODEL?.trim() || models[0]!.slug;
       if (!models.some(item => item.slug === model)) throw new UserError('Configured AI model is unavailable. Stop the combined bot and check auth models.');
       const effort = reasoningEffort();
-      chat = new ChatService(new ChatGPTProvider(model,undefined,undefined,effort,instructions),store);
+      provider = new ChatGPTProvider(model,undefined,undefined,effort,instructions);
+      chat = new ChatService(provider,store);
       state('ready',`ChatGPT plan / ${model}${effort ? ` / reasoning ${effort}` : ''}`);
     }
   }

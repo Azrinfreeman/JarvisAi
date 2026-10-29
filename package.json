@@ -1,6 +1,6 @@
 {
   "name": "jarvis-sleep-companion",
-  "version": "0.1.0",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,6 +17,9 @@
     "auth": "node --import tsx src/auth-cli.ts",
     "register": "node --import tsx src/register.ts",
     "check": "tsc --noEmit",
+    "voice:eval": "node --import tsx scripts/voice-summary-eval.ts",
+    "voice:local:setup": "node --import tsx scripts/local-speech-setup.ts",
+    "voice:local:smoke": "node --import tsx scripts/local-speech-smoke.ts",
     "test": "node --import tsx --test tests/*.test.ts tests/*.test.mjs"
   },
   "dependencies": {

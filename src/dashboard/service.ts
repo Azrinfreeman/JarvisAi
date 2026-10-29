@@ -1,16 +1,48 @@
 import { existsSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { SettingsStore, isRecord } from '../settings.js';
 import { BotSupervisor } from './supervisor.js';
 import { apiModels, OpenAIProvider } from '../openai-provider.js';
 import { reasoningEffort } from '../config.js';
 import { UserError } from '../errors.js';
+import { LocalSpeechSetup } from '../voice-summary/local-setup.js';
+
+export async function readVoiceSummaryStatus(path: string, now = Date.now()) {
+  const off = { state:'off', coverageSeconds:0, participants:0, model:'', message:'Voice listening is off.', usageSeconds:0 };
+  let file;
+  try {
+    file = await open(path, 'r');
+    const info = await file.stat();
+    if (!info.isFile() || info.size > 16384 || now - info.mtimeMs > 30000 || now - info.mtimeMs < -5000) return off;
+    const raw: unknown = JSON.parse(await file.readFile('utf8'));
+    if (!isRecord(raw)) return off;
+    const timestamp = raw.updatedAt ?? raw.at;
+    const at = typeof timestamp === 'string' ? Date.parse(timestamp) : NaN;
+    if (!Number.isFinite(at) || now - at > 30000 || now - at < -5000 || raw.stopped === true) return off;
+    const state = typeof raw.state === 'string' && ['off','waiting','listening','paused','processing'].includes(raw.state) ? raw.state : 'off';
+    const count = (value: unknown, max: number) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.min(value, max) : 0;
+    const model = typeof raw.model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,199}$/.test(raw.model) ? raw.model : '';
+    const message = typeof raw.message === 'string' ? raw.message.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 240) : '';
+    return { state, ...(state !== 'off' && typeof raw.channelId === 'string' && /^\d{17,20}$/.test(raw.channelId) ? {channelId:raw.channelId} : {}),
+      coverageSeconds:state === 'off' ? 0 : count(raw.coverageSeconds, 300),
+      participants:state === 'off' ? 0 : Math.floor(count(raw.participants, 10)), model, message, usageSeconds:count(raw.usageSeconds, 600000) };
+  } catch { return off; }
+  finally { await file?.close(); }
+}
 
 export class DashboardService {
   private testing = false;
   private lastTest = 0;
-  constructor(readonly settings = new SettingsStore(), readonly supervisor = new BotSupervisor(settings), private request = fetch) {}
+  readonly localSpeech: LocalSpeechSetup;
+  constructor(readonly settings = new SettingsStore(), readonly supervisor = new BotSupervisor(settings), private request = fetch) {
+    this.localSpeech = new LocalSpeechSetup(settings.root);
+  }
+  localSpeechStatus() { return this.localSpeech.status(); }
+  localSpeechSetup() { return this.localSpeech.begin(); }
+  localSpeechCancel() { return this.localSpeech.cancel(); }
   save(body: unknown) { return this.supervisor.exclusive(() => this.settings.update(body)); }
+  voiceSummaryStatus() { return readVoiceSummaryStatus(resolve(this.settings.root, 'data/voice-summary-status.json')); }
   async test(kind: string) {
     if (!['discord','ai','ai-response'].includes(kind)) throw new UserError('Unknown connection test.');
     if (this.testing || Date.now() - this.lastTest < 5000) throw new UserError('Wait a few seconds before another connection test.');

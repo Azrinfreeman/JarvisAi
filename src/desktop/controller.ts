@@ -23,6 +23,10 @@ export class DesktopController {
     switch (operation) {
       case 'status': return readRuntimeStatus(join(this.settings.root,'data/runtime-status.json'));
       case 'settings': return this.settings.view();
+      case 'localSpeechStatus': return this.service.localSpeechStatus();
+      case 'localSpeechSetup': return this.service.localSpeechSetup();
+      case 'localSpeechCancel': return this.service.localSpeechCancel();
+      case 'voiceSummaryStatus': return this.service.voiceSummaryStatus();
       case 'saveSettings':
         if (existsSync(join(this.settings.root,'data/import.pending'))) throw new UserError('Recover the interrupted import before editing settings.');
         return this.service.save(argument);
@@ -95,5 +99,18 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     catch(error) { reply({id:message.id,error:safeError(error)}); }
     finally {pending--;}
   });
-  process.on('disconnect',()=>{controller.cancel(); const timer=setInterval(()=>{if (!pending && !controller.service.supervisor.busy) {clearInterval(timer);process.exit(0);}},100);});
+  process.on('disconnect',()=>{
+    controller.cancel();
+    let setupCancelled=false;
+    Promise.resolve().then(async()=>{controller.service.localSpeechCancel();await controller.service.localSpeech.wait();}).catch(()=>{}).finally(()=>{setupCancelled=true;});
+    let checking=false;
+    const timer=setInterval(async ()=>{
+      if (pending || controller.service.supervisor.busy || !setupCancelled || checking) return;
+      checking=true;
+      try {
+        clearInterval(timer);process.exit(0);
+      } catch {clearInterval(timer);process.exit(0);}
+      finally {checking=false;}
+    },1000);
+  });
 }

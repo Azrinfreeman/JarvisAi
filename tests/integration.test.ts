@@ -46,7 +46,8 @@ async function close(client: AIClient, dir?: string) {
   if (dir) rmSync(dir,{recursive:true,force:true,maxRetries:10,retryDelay:100});
 }
 test('single command owner preserves all commands and atomically suppresses replay',() => {
-  assert.deepEqual(combinedCommands.map(c => c.name),['ask','reset','status','help','sleep','nickname']);
+  assert.deepEqual(combinedCommands.map(c => c.name),['ask','reset','status','help','sleep','voice-summary','nickname']);
+  assert.equal(commandOwner('voice-summary'),'voice-summary');
   assert.equal(commandOwner('nickname'),'nickname');
   assert.equal(commandOwner('sleep'),'sleep'); assert.equal(commandOwner('ask'),'ai'); assert.equal(commandOwner('other'),undefined);
   const gate = new DispatchGate(); assert.equal(gate.claim('one'),true); assert.equal(gate.claim('one'),false);

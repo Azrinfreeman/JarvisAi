@@ -3,6 +3,7 @@ import type { ImageAttachment } from '../images.js';
 import type { ReferencedInput } from '../replies.js';
 import type { ReplyPayload } from '../responses.js';
 import { validNicknameRequest, type NicknameRequest } from '../nickname-request.js';
+import { validVoiceSummaryInput, VOICE_SUMMARY_MAX_CHARS, type VoiceSummaryInput } from '../voice-summary/summary.js';
 
 export type WorkerStatus = { phase: 'starting' | 'ready' | 'unavailable' | 'restarting'; label: string };
 export type AskInput = {
@@ -10,6 +11,7 @@ export type AskInput = {
   sourceUrl?: string; attachmentLimit?: number; useImageEmbeds?: boolean; nickname?:NicknameRequest;
 };
 export type ToWorker =
+  | { type: 'voice_summary'; id: string; input: VoiceSummaryInput }
   | { type: 'ask'; id: string; input: AskInput }
   | { type: 'reset'; id: string; identity: ChatIdentity }
   | { type: 'reference'; id: string; value?: ReferencedInput; error?: string }
@@ -18,6 +20,8 @@ export type ToWorker =
   | { type: 'cancel'; id: string }
   | { type: 'shutdown' };
 export type FromWorker =
+  | { type: 'voice_summary_result'; id: string; result: string; error?: never }
+  | { type: 'voice_summary_result'; id: string; error: string; result?: never }
   | { type: 'status'; status: WorkerStatus }
   | { type: 'reference'; id: string }
   | { type: 'result'; id: string; payload: ReplyPayload }
@@ -27,6 +31,9 @@ export type FromWorker =
 
 const record = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object';
 const short = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
+const exactKeys = (v: Record<string, unknown>, expected: string[]) =>
+  !Array.isArray(v) && Object.keys(v).length === expected.length && expected.every(k => Object.hasOwn(v, k));
+const summaryId = (id: unknown): id is string => typeof id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(id);
 export function validIdentity(v: unknown): v is ChatIdentity {
   return record(v) && ['guildId','channelId','userId'].every(k => typeof v[k] === 'string' && /^\d{17,20}$/.test(v[k] as string))
     && (v.visibility === undefined || ['private','public'].includes(String(v.visibility)));
@@ -40,6 +47,7 @@ export function validToWorker(v: unknown): v is ToWorker {
   if (v.type === 'shutdown') return true;
   if (!short(v.id, 80)) return false;
   switch(v.type) {
+    case 'voice_summary': return exactKeys(v, ['type', 'id', 'input']) && summaryId(v.id) && validVoiceSummaryInput(v.input);
     case 'cancel': return true;
     case 'delivered': return typeof v.success === 'boolean';
     case 'nickname_result': return (short(v.result,600)&&v.error===undefined)||(short(v.error,600)&&v.result===undefined);
@@ -61,6 +69,9 @@ export function validToWorker(v: unknown): v is ToWorker {
 }
 export function validFromWorker(v: unknown): v is FromWorker {
   if (!record(v)) return false;
+  if (v.type === 'voice_summary_result') return summaryId(v.id) && (
+    exactKeys(v, ['type', 'id', 'result']) && short(v.result, VOICE_SUMMARY_MAX_CHARS)
+    || exactKeys(v, ['type', 'id', 'error']) && short(v.error, 600));
   if (v.type === 'status') return record(v.status) && ['starting','ready','unavailable','restarting'].includes(String(v.status.phase)) && short(v.status.label, 600);
   if (!short(v.id, 80)) return false;
   if (['reference','done','duplicate'].includes(String(v.type))) return true;
