@@ -2,6 +2,14 @@
 
 Last updated: **29 October 2026 (MYT, UTC+08:00)**.
 
+## Latest checkpoint ? ChatGPT model selector and Windows installer, version 0.3.3
+
+Replaced the ChatGPT model textbox with preset model choices, Account default, and Custom. Custom reveals an editable model identifier; existing custom values and deployment-managed settings are preserved. Presets use the account catalog verified during diagnosis, including `gpt-6-luna`; account availability may change. The installed profile was configured with `gpt-luna-6`, which is unavailable; installing this update does not automatically alter that saved setting. Select `gpt-6-luna` and save, then stop/start the bot to apply it.
+
+Validation: TypeScript, JavaScript syntax, 231 regression tests, eight browser model-selection checks, isolated Electron UI/runtime smoke, and final packaged startup/dependency/single-instance/controller-exit checks passed. Both packaged UI copies match source. The package smoke was rerun successfully after installer creation completed. No production bot restart or provider inference was performed for this build.
+
+Built `desktop/out/make/squirrel.windows/x64/RainBotSetup.exe`: **275,364,864 bytes**, **unsigned**, SHA-256 `DE343517AF80F76BB51A4A592D684E1EC1F11F82D36D3D3210DB941B0CE9E1D8`. A sibling `.sha256` file records the checksum. Stop the bot and quit before installing. Clean-machine installation/update/uninstall remains unverified. Generated output and private profiles remain excluded from Git.
+
 ## Latest checkpoint — UI cleanup and Windows installer, version 0.3.2
 
 Implemented the approved `UI_UNSLOP_IMPLEMENTATION.md` across all five shared dashboard/desktop views. Operational readiness replaces the promotional hero; scenes and commands use compact rows; diagnostics use aligned metrics; Settings uses spaced form groups. RainBot identity, both themes, navigation, necessary privacy/credential guidance, and existing actions remain. `DESIGN.md` records the shared contract. Keyboard search focus, dialog accessibility, authorization-loss button styling, mobile navigation/save-bar clearance, and reduced-motion behavior were verified.

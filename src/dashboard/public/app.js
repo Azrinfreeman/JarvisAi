@@ -208,6 +208,24 @@ let chatgptConnected = false;
 const removedSecrets = new Set();
 const form = $('settings-form');
 const secretFields = ['DISCORD_BOT_TOKEN','OPENAI_API_KEY','VOICE_SUMMARY_API_KEY'];
+const modelChoice = $('chatgpt-model-choice');
+const modelInput = $('chatgpt-model');
+function renderModelChoice() {
+  const preset = [...modelChoice.options].some(option => option.value !== 'custom' && option.value === modelInput.value);
+  modelChoice.value = preset ? modelInput.value : 'custom';
+  modelChoice.disabled = modelInput.disabled;
+  modelChoice.title = modelInput.title;
+  $('chatgpt-custom-model').hidden = modelChoice.value !== 'custom';
+  modelInput.required = modelChoice.value === 'custom';
+}
+modelChoice.addEventListener('change', () => {
+  const custom = modelChoice.value === 'custom';
+  if (!custom) modelInput.value = modelChoice.value;
+  $('chatgpt-custom-model').hidden = !custom;
+  modelInput.required = custom;
+  if (custom) modelInput.focus();
+});
+
 const fieldLabels = { DISCORD_BOT_TOKEN:'Bot token',DISCORD_APPLICATION_ID:'Application ID',DISCORD_GUILD_ID:'Server ID',
   OWNER_DISCORD_ID:'Owner ID',ACCESS_MODE:'Access mode',ALLOWED_CHANNEL_IDS:'Allowed channel IDs',ALLOWED_ROLE_IDS:'Allowed role IDs',
   CONTROLLER_ROLE_IDS:'Sleep controller role IDs',RAIN_VOLUME:'Volume',AI_PROVIDER:'Provider',CHATGPT_MODEL:'ChatGPT model',
@@ -259,6 +277,7 @@ $('connect-form').addEventListener('submit', async event => {
 function displayProvider() {
   const api = $('ai-provider').value === 'openai';
   $('openai-settings').hidden = !api; $('chatgpt-settings').hidden = api;
+  modelInput.required = !api && modelChoice.value === 'custom';
   displayVoiceProvider();
   $('volume-output').textContent = `${Math.round(Number($('volume').value)*100)}%`;
 }
@@ -322,6 +341,7 @@ function renderSettings(data) {
     input.title=input.disabled ? 'Managed by the deployment environment' : '';
     $(id).textContent=data.secrets[key] ? data.overridden.includes(key) ? 'Configured externally' : 'Configured' : 'Not configured';
   }
+  renderModelChoice();
   $('settings-summary').textContent=data.missing.length ? `Complete setup: ${data.missing.map(key => fieldLabels[key] || key).join(', ')}.` : 'Saved settings apply on the next start.';
   markDirty();
 }
